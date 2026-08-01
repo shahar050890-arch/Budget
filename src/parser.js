@@ -24,20 +24,49 @@ window.Parser = (function () {
     { name: 'כללי',      icon: '💳', words: [] }
   ];
 
+  /** הקטגוריות שהמשתמש הוסיף בעצמו, אם יש */
+  function customCats() {
+    try { return (window.Store && Store.get().customCategories) || []; }
+    catch (e) { return []; }
+  }
+
+  /** אייקון סביר לקטגוריה חדשה, לפי מילת המפתח */
+  const ICON_GUESS = {
+    'סיגריות':'🚬','עישון':'🚬','טבק':'🚬','אלכוהול':'🍷','יין':'🍷','בירה':'🍺',
+    'קפה':'☕','ממתקים':'🍫','חטיפים':'🍿','משחקים':'🎮','ספורט':'⚽','אופניים':'🚲',
+    'צמחים':'🪴','גינון':'🪴','ספרים':'📚','מוזיקה':'🎵','צילום':'📷','נסיעות':'✈️',
+    'לוטו':'🎰','הימורים':'🎰','תרופות':'💊','קעקועים':'🖋️','תחביב':'🎨'
+  };
+
+  function guessIcon(name) {
+    if (ICON_GUESS[name]) return ICON_GUESS[name];
+    for (const k of Object.keys(ICON_GUESS)) if (name.includes(k)) return ICON_GUESS[k];
+    return '🏷️';
+  }
+
   /** קטגוריה שאפשר לצמצם בה בלי לפגוע בחיים החיוניים */
   function isFlexible(name) {
     const c = CATEGORIES.find(x => x.name === name);
-    return !!(c && c.flex);
+    if (c) return !!c.flex;
+    const cc = customCats().find(x => x.name === name);
+    return !!(cc && cc.flex);
   }
 
   function categoryIcon(name) {
     const c = CATEGORIES.find(x => x.name === name);
-    return c ? c.icon : '💳';
+    if (c) return c.icon;
+    const cc = customCats().find(x => x.name === name);
+    return cc ? cc.icon : '🏷️';
   }
 
   function detectCategory(text) {
     const t = ' ' + text + ' ';
     let best = null, bestLen = 0;
+    // קטגוריות שהמשתמש הגדיר מקבלות עדיפות — הוא בחר אותן במפורש
+    for (const c of customCats()) {
+      if (t.includes(c.name) && c.name.length > bestLen) { best = c.name; bestLen = c.name.length; }
+    }
+    if (best) return best;
     for (const c of CATEGORIES) {
       for (const w of c.words) {
         if (t.includes(w) && w.length > bestLen) { best = c.name; bestLen = w.length; }
@@ -48,10 +77,29 @@ window.Parser = (function () {
 
   /** מזהה קטגוריה שהוזכרה במפורש (לצורך הגבלות ושאילתות) */
   function explicitCategory(text) {
-    for (const c of CATEGORIES) {
-      if (text.includes(c.name)) return c.name;
-    }
+    for (const c of customCats()) if (text.includes(c.name)) return c.name;
+    for (const c of CATEGORIES) if (text.includes(c.name)) return c.name;
     return detectCategory(text);
+  }
+
+  const SUBJECT_STOP = ['חודש','חודשי','חודשית','שקל','שקלים','ש"ח','שח','עצמי','לי','זה','הכל','חודשיים'];
+
+  /**
+   * הנושא של ההגבלה — גם כשהוא לא קטגוריה מוכרת.
+   * "להגביל 1000 שקל לסיגריות" → "סיגריות"
+   */
+  function extractLimitSubject(text) {
+    const known = CATEGORIES.find(c => text.includes(c.name));
+    if (known) return known.name;
+    const custom = customCats().find(c => text.includes(c.name));
+    if (custom) return custom.name;
+
+    // המילה שאחרי "ל"/"על"/"עבור" — לוקחים את האחרונה, היא בדרך כלל הנושא
+    const matches = [...text.matchAll(/(?:\s|^)(?:ל|על|עבור)\s*([֐-׿]{3,})/g)]
+      .map(m => m[1])
+      .filter(w => !SUBJECT_STOP.includes(w) && !SUBJECT_STOP.includes(w.replace(/^ה/, '')));
+    if (!matches.length) return null;
+    return matches[matches.length - 1].replace(/^ה/, '');
   }
 
   /* ---------------- חשבונות ---------------- */
@@ -310,8 +358,13 @@ window.Parser = (function () {
       return { intent: 'unknown', text };
     }
 
-    /* --- משכורת --- */
-    if (/(משכורת|שכר|מרוויח|מרויח|הכנסה חודשית|משתכר)/.test(t) && amount != null && !/בונוס/.test(t)) {
+    /* --- משכורת ---
+       "שכר דירה" ו"שכר לימוד" הן הוצאות ולא הכנסה, וגם משפט עם פועל של
+       תשלום ("שילמתי שכר דירה") לעולם אינו הגדרת משכורת. */
+    const salaryWord = /(משכורת|שכר|מרוויח|מרויח|הכנסה חודשית|משתכר)/.test(t)
+      && !/(שכר דירה|שכר לימוד|שכר טרחה|שכירות)/.test(t)
+      && !/(שילמתי|משלם|קניתי|הוצאתי|תשלום)/.test(t);
+    if (salaryWord && amount != null && !/בונוס/.test(t)) {
       const day = (text.match(/(?:ב|ל)?(\d{1,2})\s*(?:לחודש|בחודש)/) || [])[1];
       return { intent: 'salary', amount: maxNum, salaryDay: day ? parseInt(day, 10) : null };
     }
@@ -347,6 +400,18 @@ window.Parser = (function () {
       let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי','ריבית','אחוז','אחוזים','על']);
       if (!name) name = /מינוס|אוברדרפט/.test(t) ? 'מינוס בבנק' : 'הלוואה';
       return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly, interest };
+    }
+
+    /* --- הפקדה לחשבון: "הפקדתי במזומן לחשבון 1000" --- */
+    if (/(הפקדתי|הפקדה|הכנסתי|הפקדנו|שמתי|הוספתי|נכנס|קיבלתי|משכורת נכנסה)/.test(t)
+      && amount != null && detectTarget(text) && !detectAccount(text)) {
+      return {
+        intent: 'deposit',
+        to: detectTarget(text),
+        amount: maxNum,
+        cash: /מזומן/.test(t),
+        note: tidyThing(cleanNote(text, ['הפקדתי','הפקדה','הכנסתי','הפקדנו','שמתי','הוספתי','נכנס','קיבלתי','חשבון','לחשבון','בנק']))
+      };
     }
 
     /* --- הפקדה ליעד קיים --- */
@@ -385,8 +450,15 @@ window.Parser = (function () {
     }
 
     /* --- הגבלה חודשית --- */
-    if (/(הגבלה|הגבל|מגבלה|תקרה|מקסימום|לא יותר מ|תגביל|תקציב ל)/.test(t) && amount != null) {
-      return { intent: 'limit', category: explicitCategory(text), amount: maxNum };
+    if (/(הגבלה|הגבל|מגבלה|תקרה|מקסימום|לא יותר מ|תגביל|להגביל|תקציב ל)/.test(t) && amount != null) {
+      const subject = extractLimitSubject(text);
+      const known = CATEGORIES.some(c => c.name === subject) || customCats().some(c => c.name === subject);
+      return {
+        intent: 'limit',
+        category: subject || 'כללי',
+        isNew: !!subject && !known,   // נושא חדש שהמשתמש המציא
+        amount: maxNum
+      };
     }
 
     /* --- הכנסה חד־פעמית --- */
@@ -417,5 +489,5 @@ window.Parser = (function () {
     return { intent: 'unknown', text };
   }
 
-  return { parse, CATEGORIES, categoryIcon, isFlexible, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
+  return { parse, CATEGORIES, categoryIcon, isFlexible, guessIcon, extractLimitSubject, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();

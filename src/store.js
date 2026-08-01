@@ -13,6 +13,7 @@ window.Store = (function () {
     debts: [],          // {id,name,amount,monthly,interest}
     goals: [],          // {id,name,target,saved,deadline,months,createdAt,done}
     limits: {},         // {category: amount}
+    customCategories: [], // קטגוריות שהמשתמש המציא: [{name, icon}]
     allocations: {},    // {savings|stocks: {kind:'fixed'|'percent', value}}
     chat: [],           // {role:'me'|'bot', html, ts}
     setup: { step: 0, done: false },  // אשף ההקמה בשימוש ראשון
@@ -411,6 +412,8 @@ window.Store = (function () {
       b[t.to] += dir * t.amount;
       return;
     }
+    // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
+    if (t.type === 'deposit') { b[t.to] += dir * t.amount; return; }
     if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
     if (t.cardId) return;
     b[t.source || 'checking'] -= dir * t.amount;
@@ -442,6 +445,19 @@ window.Store = (function () {
       note: note || 'העברה', date: U.todayISO(), category: 'העברה'
     };
     state.transactions.unshift(t);
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
+  /** הפקדה לחשבון — מגדילה יתרה, אינה הכנסה חודשית ואינה הוצאה */
+  function addDeposit(to, amount, note) {
+    const t = {
+      id: U.uid(), type: 'deposit', to, amount,
+      note: note || 'הפקדה', date: U.todayISO(), category: 'הפקדה'
+    };
+    state.transactions.unshift(t);
+    state.declared[to] = true;
     applyBalance(t, 1);
     save();
     return t;
@@ -554,6 +570,20 @@ window.Store = (function () {
     save();
   }
 
+  /**
+   * קטגוריה שהמשתמש המציא — נשמרת ומזוהה מכאן ואילך.
+   * ברירת המחדל היא "גמישה": כשמישהו פותח קטגוריה במיוחד כדי לעקוב אחריה,
+   * זו כמעט תמיד הוצאה שהוא שוקל לצמצם ולא הוצאה חיונית.
+   */
+  function addCustomCategory(name, icon, flex) {
+    const exists = state.customCategories.some(c => c.name === name);
+    if (!exists) state.customCategories.push({
+      name, icon: icon || '🏷️', flex: flex !== false
+    });
+    save();
+    return name;
+  }
+
   function setLimit(cat, amount) {
     if (amount === 0) delete state.limits[cat];
     else state.limits[cat] = amount;
@@ -581,10 +611,10 @@ window.Store = (function () {
     monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
     addTx, removeTx,
     setBalance, hasBalances, pendingCardCharges, totalAssets, netWorth, liquidNow,
-    savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer,
+    savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
     findCard, upsertCard, removeCard,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,
-    setLimit, setAllocation, pushChat
+    setLimit, setAllocation, pushChat, addCustomCategory
   };
 })();

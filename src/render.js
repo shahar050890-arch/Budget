@@ -93,22 +93,66 @@ window.Render = (function () {
       + '<div class="row-amt bad">-' + M(val) + '</div></div>';
   }
 
+  /**
+   * גרף ההוצאות לפי קטגוריה — עמודות אופקיות ממוינות מהגדול לקטן.
+   * סדרה אחת בגוון אחד: האורך הוא הנתון. חריגה מהגבלה מסומנת בקו סף
+   * ובתווית עם אייקון, ולא בצבע העמודה — כדי שהמשמעות לא תישען על צבע בלבד.
+   */
   function breakdown() {
     const box = document.getElementById('breakdown');
     const cats = Store.byCategory();
-    if (!cats.length) { box.innerHTML = empty('אין עדיין הוצאות החודש.<br>כתוב בצ\'אט «קניתי קפה 28» ונתחיל.'); return; }
+    if (!cats.length) {
+      box.innerHTML = empty('אין עדיין הוצאות החודש.<br>כתוב בצ\'אט «קניתי קפה 28» וזה יופיע כאן בגרף.');
+      return;
+    }
+
     const total = cats.reduce((s, c) => s + c[1], 0);
-    box.innerHTML = cats.map(([cat, val]) => {
-      const p = U.pct(val, total);
-      const limit = Store.get().limits[cat];
-      const lp = limit ? U.pct(val, limit) : null;
-      return '<div class="block">'
-        + '<div class="block-head"><strong>' + Parser.categoryIcon(cat) + ' ' + U.esc(cat) + '</strong>'
-        + '<span>' + M(val) + ' · ' + p + '%'
-        + (limit ? ' <span class="pill ' + barClass(lp) + '">מתוך ' + M(limit) + '</span>' : '') + '</span></div>'
-        + '<div class="bar"><div class="bar-fill ' + (limit ? barClass(lp) : '') + '" style="width:' + U.clamp(limit ? lp : p, 2, 100) + '%"></div></div>'
+    const max = cats[0][1];                       // הקטגוריה הגדולה קובעת את הסקאלה
+    const limits = Store.get().limits;
+
+    let html = '<div class="viz">';
+
+    html += cats.map(([cat, val]) => {
+      const limit = limits[cat];
+      const over = limit && val > limit;
+      // הסקאלה נמתחת עד הגדול מבין ההוצאה וההגבלה, כדי שקו הסף תמיד ייכנס
+      const scale = Math.max(max, limit || 0);
+      const w = U.clamp((val / scale) * 100, 1.5, 100);
+      const limitPos = limit ? U.clamp((limit / scale) * 100, 0, 100) : null;
+
+      return '<div class="viz-row">'
+        + '<div class="viz-name">' + Parser.categoryIcon(cat) + '<span>' + U.esc(cat) + '</span>'
+        + (over ? '<span class="viz-flag">⚠ מעל ההגבלה</span>' : '') + '</div>'
+        + '<div class="viz-val">' + M(val) + ' · ' + U.pct(val, total) + '%'
+        + (limit ? ' <span class="muted">מתוך ' + M(limit) + '</span>' : '') + '</div>'
+        + '<div class="viz-track">'
+        + '<div class="viz-bar" style="width:' + w + '%"></div>'
+        + (limitPos != null
+          ? '<div class="viz-limit" style="inset-inline-start:' + limitPos + '%" title="הגבלה: ' + M(limit) + '"></div>'
+          : '')
+        + '</div>'
         + '</div>';
     }).join('');
+
+    // חלוקה לחיוני מול גמיש — כמה מההוצאה בכלל ניתן לצמצם
+    const flexTotal = cats.filter(([c]) => Parser.isFlexible(c)).reduce((s, c) => s + c[1], 0);
+    const essTotal = total - flexTotal;
+    if (flexTotal && essTotal) {
+      html += '<div class="viz-foot" style="display:block">'
+        + '<div class="viz-split">'
+        + '<i class="ess" style="width:' + U.pct(essTotal, total) + '%"></i>'
+        + '<i class="flx" style="width:' + U.pct(flexTotal, total) + '%"></i>'
+        + '</div>'
+        + '<div class="viz-key">'
+        + '<span><i></i>חיוני <b>' + M(essTotal) + '</b> (' + U.pct(essTotal, total) + '%)</span>'
+        + '<span><i class="soft"></i>ניתן לצמצום <b>' + M(flexTotal) + '</b> (' + U.pct(flexTotal, total) + '%)</span>'
+        + '</div></div>';
+    } else {
+      html += '<div class="viz-foot"><span>סה"כ החודש</span><b style="color:var(--text)">' + M(total) + '</b></div>';
+    }
+
+    html += '</div>';
+    box.innerHTML = html;
   }
 
   function limits() {
@@ -177,20 +221,23 @@ window.Render = (function () {
       const card = t.cardId ? Store.get().cards.find(c => c.id === t.cardId) : null;
       const A = Parser.ACCOUNTS;
       const isTransfer = t.type === 'transfer';
+      const isDeposit = t.type === 'deposit';
       const sub = isTransfer
         ? A[t.from].label + ' ← ' + A[t.to].label
-        : U.esc(t.category)
+        : isDeposit
+          ? 'הפקדה ל' + A[t.to].label
+          : U.esc(t.category)
           + (card ? ' · ' + U.esc(card.name) : '')
           + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
 
       html += '<div class="row">'
-        + '<div class="row-ico">' + (isTransfer ? '🔁' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
+        + '<div class="row-ico">' + (isTransfer ? '🔁' : isDeposit ? '💵' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
         + '<div class="row-main">'
         + '<div class="row-title">' + U.esc(t.note || t.category) + '</div>'
         + '<div class="row-sub">' + sub + '</div>'
         + '</div>'
-        + '<div class="row-amt ' + (isTransfer ? '' : t.type === 'income' ? 'good' : 'bad') + '">'
-        + (isTransfer ? '' : t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
+        + '<div class="row-amt ' + (isTransfer ? '' : isDeposit || t.type === 'income' ? 'good' : 'bad') + '">'
+        + (isTransfer ? '' : isDeposit || t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
         + '<button class="row-del" data-del-tx="' + t.id + '" title="מחק">✕</button>'
         + '</div>';
     }

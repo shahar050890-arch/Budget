@@ -14,9 +14,42 @@ window.Engine = (function () {
     // כל עוד אשף ההקמה פעיל, ההודעה נקראת בהקשר של השלב הנוכחי
     if (!s.setup.done) return Setup.handle(raw);
 
+    lastInput = String(raw || '');
+    turn++;
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
     return fn(p, raw);
+  }
+
+  /* ================= ניסוח ================= */
+
+  let lastInput = '';
+  let turn = 0;   // מונה הודעות — מסובב את הניסוחים
+
+  /**
+   * בוחר ניסוח מתוך כמה חלופות, מתחלף מהודעה להודעה —
+   * כדי שאותה פעולה לא תחזיר בדיוק את אותו משפט כל פעם.
+   */
+  function say(options) {
+    return options[turn % options.length];
+  }
+
+  /** מצטט בחזרה את מה שהמשתמש כתב, כדי שיראה שנקרא */
+  function echo(text) {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    const short = t.length > 60 ? t.slice(0, 58) + '…' : t;
+    return '<span class="muted">קראתי: «' + U.esc(short) + '»</span><br>';
+  }
+
+  /** תגובה אנושית לגודל ההוצאה ביחס להכנסה */
+  function reaction(amount) {
+    const income = Store.monthIncome();
+    if (!income) return '';
+    const share = amount / income;
+    if (share >= 0.25) return say(['זו הוצאה גדולה. ', 'סכום רציני. ', 'זה נתח משמעותי מהחודש. ']);
+    if (share >= 0.08) return say(['הוצאה לא קטנה. ', 'סכום בינוני. ', '']);
+    return '';
   }
 
   /** שורת יתרות מצטברת — מוצגת אחרי כל תנועה */
@@ -120,7 +153,8 @@ window.Engine = (function () {
 
       const A = Parser.ACCOUNTS;
       const plan = Store.monthlyPlan();
-      let html = '<span class="m-title">✅ נרשמה הוצאה</span>'
+      let html = '<span class="m-title">' + say(['✅ רשמתי', '✅ נרשם', '👌 נקלט', '✅ אצלי']) + '</span>'
+        + echo(lastInput)
         + bad('-' + M(tx.amount)) + ' · ' + Parser.categoryIcon(tx.category) + ' ' + U.esc(tx.category)
         + (tx.note && tx.note !== tx.category ? ' · ' + U.esc(tx.note) : '')
         + (card ? ' <span class="tag">' + U.esc(card.name) + '</span>' : '')
@@ -137,7 +171,7 @@ window.Engine = (function () {
         }
       }
 
-      html += '<hr>' + afterExpenseAdvice(plan);
+      html += '<hr>' + reaction(tx.amount) + afterExpenseAdvice(plan);
       html += limitWarning(tx.category);
       if (card) html += cardWarning(card);
       html += balancesLine();
@@ -149,7 +183,8 @@ window.Engine = (function () {
       Store.snapshot('הכנסה');
       const tx = Store.addTx({ type: 'income', amount: p.amount, category: 'הכנסה', note: p.note, date: p.date });
       const plan = Store.monthlyPlan();
-      return '<span class="m-title">💰 נרשמה הכנסה</span>'
+      return '<span class="m-title">' + say(['💰 יפה, נרשמה הכנסה', '💰 נכנס כסף', '💰 רשמתי את ההכנסה']) + '</span>'
+        + echo(lastInput)
         + ok('+' + M(tx.amount)) + ' · ' + U.esc(tx.note)
         + '<hr>סה"כ הכנסות החודש: ' + b(M(plan.income)) + '. פנוי כעת: ' + ok(M(plan.free)) + '.';
     },
@@ -365,15 +400,43 @@ window.Engine = (function () {
       return html;
     },
 
+    /* ---------- הפקדה לחשבון ---------- */
+    deposit(p) {
+      Store.snapshot('הפקדה');
+      const A = Parser.ACCOUNTS;
+      const before = Store.get().balances[p.to];
+      Store.addDeposit(p.to, p.amount, p.note || (p.cash ? 'הפקדה במזומן' : 'הפקדה'));
+      const after = Store.get().balances[p.to];
+
+      let html = '<span class="m-title">💵 ההפקדה נרשמה</span>'
+        + ok('+' + M(p.amount)) + ' ל' + A[p.to].label
+        + (p.cash ? ' <span class="tag">מזומן</span>' : '')
+        + '<hr>' + A[p.to].icon + ' ' + A[p.to].label + ': '
+        + M(before) + ' → <b>' + M(after) + '</b>';
+
+      html += '<br><span class="muted">רשמתי את זה כתוספת ליתרה בלבד. '
+        + 'אם זו הכנסה חדשה שצריכה להיכנס לתקציב החודש — כתוב «קיבלתי ' + U.num(p.amount) + '».</span>';
+      return html + balancesLine();
+    },
+
     /* ---------- הגבלה חודשית ---------- */
     limit(p) {
       Store.snapshot('הגבלה');
+
+      // נושא שהמשתמש המציא — נרשם כקטגוריה חדשה ויזוהה מכאן ואילך
+      if (p.isNew) Store.addCustomCategory(p.category, Parser.guessIcon(p.category));
+
       Store.setLimit(p.category, p.amount);
       const spent = Store.categorySpent(p.category);
       const icon = Parser.categoryIcon(p.category);
 
       let html = '<span class="m-title">🎚️ הוגדרה הגבלה חודשית</span>'
-        + icon + ' ' + U.esc(p.category) + ': עד ' + b(M(p.amount)) + ' בחודש';
+        + icon + ' <b>' + U.esc(p.category) + '</b>: עד ' + b(M(p.amount)) + ' בחודש';
+
+      if (p.isNew) {
+        html += '<br><span class="muted">« ' + U.esc(p.category) + ' » היא קטגוריה חדשה שפתחתי עכשיו. '
+          + 'מעכשיו כל פעם שתכתוב את המילה הזו, ההוצאה תיכנס לשם אוטומטית.</span>';
+      }
       html += '<hr>הוצאת עד כה החודש: ' + b(M(spent)) + ' (' + U.pct(spent, p.amount) + '%).';
       if (spent > p.amount) html += '<br>🚨 כבר חרגת ב־' + bad(M(spent - p.amount)) + '.';
       else {
@@ -776,6 +839,7 @@ window.Engine = (function () {
       // שאלה שלא זוהתה — לפחות לכוון לשאלות שכן אפשר לשאול
       if (/\?|האם|כמה|מה |למה|איך|מתי|כדאי|עדיף|יכול/.test(p.text || '')) {
         return '<span class="m-title">🤔 לא הבנתי בדיוק מה שאלת</span>'
+          + echo(lastInput)
           + 'אבל אפשר לשאול אותי דברים כאלה:<ul>'
           + '<li>אני יכול לקנות אוזניות ב-800?</li>'
           + '<li>מה אתה ממליץ לי?</li>'
@@ -784,8 +848,10 @@ window.Engine = (function () {
           + '<li>כמה הוצאתי על מזון?</li></ul>';
       }
 
-      return '<span class="m-title">🤔 לא הבנתי את זה</span>נסה לכלול סכום, למשל «קניתי פיצה 60».'
-        + '<br><span class="muted">לרשימת כל הפקודות: «עזרה»</span>';
+      return '<span class="m-title">🤔 לא מצאתי כאן סכום</span>'
+        + echo(lastInput)
+        + 'אני עובד על זיהוי מילים וסכומים, אז כמעט תמיד צריך מספר בהודעה — למשל «קניתי פיצה 60».'
+        + '<br><span class="muted">לרשימת כל מה שאני מבין: «עזרה»</span>';
     }
   };
 

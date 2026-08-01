@@ -90,6 +90,16 @@ check('ביטול', r.intent === 'undo', JSON.stringify(r));
 r = p('5k על ביטוח');
 check('קיצור k', r.intent === 'expense' && r.amount === 5000, JSON.stringify(r));
 
+r = p('שילמתי 3200 שכר דירה');
+check('"שכר דירה" הוא הוצאה ולא משכורת',
+  r.intent === 'expense' && r.category === 'דיור' && r.amount === 3200, JSON.stringify(r));
+
+r = p('שילמתי 8000 שכר לימוד');
+check('"שכר לימוד" הוא הוצאה', r.intent === 'expense', JSON.stringify(r));
+
+r = p('קיבלתי משכורת 12000');
+check('משכורת אמיתית עדיין נקלטת', r.intent === 'salary' && r.amount === 12000, JSON.stringify(r));
+
 console.log('\n== זרימה מלאה ==');
 Engine.handle('המשכורת שלי 12000');
 check('משכורת נשמרה', Store.get().profile.salary === 12000);
@@ -312,6 +322,57 @@ check('פתיחת חודש שואלת על חיסכון והשקעות',
   /לחיסכון/.test(ans) && /למניות/.test(ans));
 check('פתיחת חודש מציגה סיכום קודם', /הכי הרבה הוצאת/.test(ans));
 
+console.log('\n== קטגוריות חופשיות ==');
+r = p('אני רוצה להגביל 1000 שקל לסיגריות');
+check('נושא חופשי בהגבלה', r.intent === 'limit' && r.category === 'סיגריות' && r.amount === 1000 && r.isNew, JSON.stringify(r));
+
+r = p('הגבלה למסעדות 800');
+check('קטגוריה מוכרת לא מסומנת כחדשה', r.category === 'מסעדות' && !r.isNew, JSON.stringify(r));
+
+ans = Engine.handle('אני רוצה להגביל 1000 שקל לסיגריות');
+check('הקטגוריה נוצרה',
+  Store.get().customCategories.some(c => c.name === 'סיגריות'),
+  JSON.stringify(Store.get().customCategories));
+check('ההגבלה נשמרה על הנושא', Store.get().limits['סיגריות'] === 1000);
+check('התשובה מסבירה שזו קטגוריה חדשה', /קטגוריה חדשה/.test(ans));
+check('אייקון מתאים נבחר', Parser.categoryIcon('סיגריות') === '🚬', Parser.categoryIcon('סיגריות'));
+
+check('קטגוריה חדשה נחשבת ניתנת לצמצום', Parser.isFlexible('סיגריות'));
+
+r = p('קניתי סיגריות 45');
+check('הוצאה נכנסת לקטגוריה החדשה', r.intent === 'expense' && r.category === 'סיגריות', JSON.stringify(r));
+
+Engine.handle('קניתי סיגריות 45');
+check('נצבר בקטגוריה החדשה', Store.categorySpent('סיגריות') === 45, Store.categorySpent('סיגריות'));
+
+console.log('\n== הפקדה לחשבון ==');
+r = p('הפקדתי במזומן לחשבון 1000 שקל');
+check('הפקדה לעו"ש', r.intent === 'deposit' && r.to === 'checking' && r.amount === 1000 && r.cash, JSON.stringify(r));
+
+r = p('הפקדתי 3750 לרכב');
+check('הפקדה ליעד עדיין עובדת', r.intent === 'goalDeposit' && r.name === 'רכב', JSON.stringify(r));
+
+r = p('להפריש 1000 לחיסכון');
+check('הפרשה קבועה לא הפכה להפקדה', r.intent === 'allocation', JSON.stringify(r));
+
+const chkPre = Store.get().balances.checking;
+const incomePre = Store.monthIncome();
+const spentPre = Store.monthExpense();
+Engine.handle('הפקדתי במזומן לחשבון 1000 שקל');
+check('ההפקדה הגדילה את העו"ש',
+  Store.get().balances.checking === chkPre + 1000, Store.get().balances.checking);
+check('ההפקדה אינה הכנסה חודשית', Store.monthIncome() === incomePre, Store.monthIncome());
+check('ההפקדה אינה הוצאה', Store.monthExpense() === spentPre, Store.monthExpense());
+
+console.log('\n== ניסוח התשובות ==');
+const a1 = Engine.handle('קניתי קפה 28');
+check('התשובה מצטטת את מה שנכתב', /קראתי:/.test(a1) && /קניתי קפה 28/.test(a1), a1.slice(0, 90));
+const a2 = Engine.handle('קניתי סנדוויץ 30');
+check('הפתיח מתחלף בין הודעות',
+  a1.slice(0, 40) !== a2.slice(0, 40), a1.slice(0, 30) + ' | ' + a2.slice(0, 30));
+const a3 = Engine.handle('שילמתי 5000 על שיפוץ');
+check('תגובה לסכום גדול', /(הוצאה גדולה|סכום רציני|נתח משמעותי)/.test(a3), a3.slice(0, 140));
+
 console.log('\n== אשף ההקמה ==');
 Store.reset();
 check('אשף פעיל בהתחלה', Store.get().setup.done === false);
@@ -344,7 +405,7 @@ check('יעד נקלט באשף', Store.get().goals.length === 1 && Store.get().
 
 // אחרי האשף, הודעה רגילה מטופלת כרגיל
 ans = Engine.handle('קניתי קפה 28');
-check('אחרי האשף חוזרים לזרימה רגילה', /נרשמה הוצאה/.test(ans), ans.slice(0, 60));
+check('אחרי האשף חוזרים לזרימה רגילה', /רשמתי|נרשם|נקלט|אצלי/.test(ans), ans.slice(0, 60));
 check('היתרה המצטברת מוצגת', /היתרות שלך/.test(ans));
 
 // שלב חובה לא ניתן לדילוג
