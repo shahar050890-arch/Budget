@@ -1,0 +1,308 @@
+/* parser.js — הבנת שפה חופשית בעברית והפיכתה לפעולה */
+window.Parser = (function () {
+
+  /* ---------------- קטגוריות ---------------- */
+
+  const CATEGORIES = [
+    { name: 'מזון',      icon: '🛒', words: ['סופר','סופרמרקט','מכולת','שופרסל','רמי לוי','ויקטורי','יינות ביתן','אושר עד','טיב טעם','קניות','אוכל','מזון','ירקות','פירות','בשר','לחם','חלב'] },
+    { name: 'מסעדות',    icon: '🍔', words: ['מסעדה','מסעדות','קפה','קפהשק','בית קפה','ארוחה','פיצה','המבורגר','בורגר','שווארמה','פלאפל','סושי','משלוח','וולט','תן ביס','wolt','מאפה','קרואסון','גלידה','בר','פאב','בירה'] },
+    { name: 'תחבורה',    icon: '🚗', words: ['דלק','תדלוק','סולר','בנזין','אוטובוס','רכבת','מונית','גט','אובר','חניה','חנייה','כביש 6','נסיעה','רב קו','רב־קו','טסט','ביטוח רכב','מוסך','צמיגים','טיפול לרכב','אופנוע','קורקינט'] },
+    { name: 'דיור',      icon: '🏠', words: ['שכר דירה','שכירות','משכנתא','ארנונה','ועד בית','חשמל','מים','גז','תיקון','אינסטלטור','חשמלאי','ריהוט','איקאה','כלי בית'] },
+    { name: 'תקשורת',    icon: '📱', words: ['סלולר','סלולרי','פלאפון','טלפון','אינטרנט','סלקום','פרטנר','הוט','yes','יס','בזק','גולן','רמי לוי תקשורת','חבילת גלישה'] },
+    { name: 'בילויים',   icon: '🎬', words: ['סרט','קולנוע','הצגה','תיאטרון','הופעה','כרטיסים','נטפליקס','netflix','ספוטיפיי','spotify','דיסני','משחק','פלייסטיישן','גיימינג','מנוי','בילוי','טיול','חופשה','מלון','צימר','טיסה'] },
+    { name: 'בריאות',    icon: '💊', words: ['רופא','רופאה','מרפאה','קופת חולים','כללית','מכבי','מאוחדת','לאומית','תרופות','בית מרקחת','סופר פארם','בדיקה','שיניים','שיננית','משקפיים','אופטיקה','ביטוח בריאות','פסיכולוג','פיזיותרפיה'] },
+    { name: 'ביגוד',     icon: '👕', words: ['בגדים','ביגוד','חולצה','מכנסיים','נעליים','סניקרס','זארה','קסטרו','fox','אופנה','תיק','מעיל','גרביים'] },
+    { name: 'ילדים',     icon: '🧸', words: ['גן','גנון','צהרון','מעון','בייביסיטר','חוג','חוגים','בית ספר','ילד','ילדים','תינוק','חיתולים','טיטולים','צעצוע','צעצועים'] },
+    { name: 'חינוך',     icon: '📚', words: ['לימודים','שכר לימוד','אוניברסיטה','מכללה','קורס','ספרים','ספר','השתלמות','שיעור פרטי'] },
+    { name: 'טיפוח',     icon: '💇', words: ['תספורת','מספרה','ספר','קוסמטיקה','איפור','ציפורניים','מניקור','פדיקור','ספא','עיסוי','חדר כושר','כושר','מכון כושר','חיטוב'] },
+    { name: 'ביטוח',     icon: '🛡️', words: ['ביטוח','פוליסה','ביטוח לאומי','ביטוח דירה','ביטוח חיים'] },
+    { name: 'מתנות',     icon: '🎁', words: ['מתנה','מתנות','תרומה','צדקה','חתונה','בר מצווה','יום הולדת'] },
+    { name: 'חיות',      icon: '🐶', words: ['כלב','חתול','וטרינר','אוכל לכלב','חיית מחמד','פטשופ'] },
+    { name: 'עמלות',     icon: '🏦', words: ['עמלה','עמלות','ריבית','בנק','משיכה','דמי ניהול'] },
+    { name: 'חובות',     icon: '📉', words: [] },
+    { name: 'חיסכון',    icon: '🐖', words: [] },
+    { name: 'כללי',      icon: '💳', words: [] }
+  ];
+
+  function categoryIcon(name) {
+    const c = CATEGORIES.find(x => x.name === name);
+    return c ? c.icon : '💳';
+  }
+
+  function detectCategory(text) {
+    const t = ' ' + text + ' ';
+    let best = null, bestLen = 0;
+    for (const c of CATEGORIES) {
+      for (const w of c.words) {
+        if (t.includes(w) && w.length > bestLen) { best = c.name; bestLen = w.length; }
+      }
+    }
+    return best || 'כללי';
+  }
+
+  /** מזהה קטגוריה שהוזכרה במפורש (לצורך הגבלות ושאילתות) */
+  function explicitCategory(text) {
+    for (const c of CATEGORIES) {
+      if (text.includes(c.name)) return c.name;
+    }
+    return detectCategory(text);
+  }
+
+  /* ---------------- כרטיסי אשראי ---------------- */
+
+  const CARD_BRANDS = ['ויזה','visa','מאסטרקארד','מאסטר','mastercard','ישראכרט','אמריקן אקספרס','אמקס','amex','כאל','cal','לאומי קארד','מקס','max','דיינרס','diners','פרימיום','זהב','דיגיטלי'];
+
+  function detectCardName(text) {
+    for (const b of CARD_BRANDS) {
+      const re = new RegExp('(?:^|\\s|ב|ה)' + b + '(?:\\s|$|,|\\.)', 'i');
+      if (re.test(text)) return b;
+    }
+    // "כרטיס X" — המילה שאחרי "כרטיס"
+    const m = text.match(/כרטיס(?:\s+אשראי)?\s+(?:ה)?([֐-׿a-zA-Z"'׳״]{2,})/);
+    if (m && !/מסגרת|אשראי/.test(m[1])) return m[1];
+    return null;
+  }
+
+  /* ---------------- מספרים ---------------- */
+
+  const WORD_NUM = {
+    'אפס':0,'אחד':1,'אחת':1,'שניים':2,'שתיים':2,'שני':2,'שתי':2,'שלושה':3,'שלוש':3,
+    'ארבעה':4,'ארבע':4,'חמישה':5,'חמש':5,'שישה':6,'שש':6,'שבעה':7,'שבע':7,
+    'שמונה':8,'תשעה':9,'תשע':9,'עשרה':10,'עשר':10,'אחד עשר':11,'שנים עשר':12,'שניים עשר':12
+  };
+
+  function normalize(text) {
+    return String(text)
+      .replace(/[־–—]/g, '-')
+      .replace(/[“”‘’]/g, '"')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /** כל המספרים בטקסט, לפי סדר הופעה: [{value, start, end}] */
+  function findNumbers(text) {
+    const out = [];
+    const re = /(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|K|אלף|אלפים)?/g;
+    let m;
+    while ((m = re.exec(text))) {
+      let v = parseFloat(m[1].replace(/,/g, ''));
+      if (m[2]) v *= 1000;
+      out.push({ value: v, start: m.index, end: m.index + m[0].length, raw: m[0] });
+    }
+    // מילות מספר עצמאיות
+    if (/(^|\s)אלפיים(\s|$)/.test(text)) out.push({ value: 2000, start: text.indexOf('אלפיים'), end: text.indexOf('אלפיים') + 6, raw: 'אלפיים' });
+    if (!out.length && /(^|\s)אלף(\s|$)/.test(text)) out.push({ value: 1000, start: text.indexOf('אלף'), end: text.indexOf('אלף') + 3, raw: 'אלף' });
+    return out.sort((a, b) => a.start - b.start);
+  }
+
+  /** מספר החודשים שהוזכר: "4 חודשים", "בארבעה חודשים", "חצי שנה", "שנה" */
+  function findMonths(text) {
+    let m = text.match(/(\d+)\s*(?:חודשים|חודש|חו')/);
+    if (m) return parseInt(m[1], 10);
+
+    m = text.match(/(?:ב|תוך|במשך|עוד)?\s*([֐-׿]+)\s*(?:חודשים|חודש)/);
+    if (m) {
+      const w = m[1].replace(/^ב/, '');
+      if (WORD_NUM[w] != null) return WORD_NUM[w];
+    }
+    if (/חצי\s*שנה/.test(text)) return 6;
+    if (/שנתיים/.test(text)) return 24;
+    if (/(\d+)\s*שנים/.test(text)) return parseInt(text.match(/(\d+)\s*שנים/)[1], 10) * 12;
+    if (/(^|\s)שנה(\s|$)/.test(text)) return 12;
+    return null;
+  }
+
+  function findPercent(text) {
+    const m = text.match(/(\d+(?:\.\d+)?)\s*(?:%|אחוז(?:ים)?)/);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  /* ---------------- ניקוי תיאור ---------------- */
+
+  const STOP = ['קניתי','שילמתי','הוצאתי','שילמתי על','ב','בסך','של','על','את','ה','עוד','היום','אתמול','שקל','שקלים','ש"ח','שח','₪','נתתי','עלה','עלות','בערך','סהכ','סה"כ','לי','אני','לקחתי','הזמנתי','חייבתי','בכרטיס','כרטיס','אשראי','במזומן','מזומן','באשראי','העברה','ביט','bit','paybox','פייבוקס','רשמתי','תרשום','תוסיף','הוסף'];
+
+  function cleanNote(text, extra = []) {
+    let t = ' ' + text + ' ';
+    // הסרת סכומים ומטבע
+    t = t.replace(/\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?/g, ' ');
+    t = t.replace(/[₪]/g, ' ');
+    const kill = STOP.concat(extra, CARD_BRANDS);
+    kill.sort((a, b) => b.length - a.length).forEach(w => {
+      if (!w) return;
+      t = t.replace(new RegExp('(?:^|\\s)[בהלמו]?' + escapeRe(w) + '(?=\\s|$)', 'gi'), ' ');
+    });
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
+  function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /* ---------------- תאריך ---------------- */
+
+  function detectDate(text) {
+    const d = new Date();
+    if (/אתמול/.test(text)) { d.setDate(d.getDate() - 1); return U.toISO(d); }
+    if (/שלשום/.test(text)) { d.setDate(d.getDate() - 2); return U.toISO(d); }
+    const m = text.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/);
+    if (m) {
+      let y = m[3] ? parseInt(m[3], 10) : d.getFullYear();
+      if (y < 100) y += 2000;
+      const dd = new Date(y, parseInt(m[2], 10) - 1, parseInt(m[1], 10));
+      if (!isNaN(dd)) return U.toISO(dd);
+    }
+    return U.todayISO();
+  }
+
+  /* ---------------- שם יעד ---------------- */
+
+  const GOAL_FILLER = ['שעולה','שעולים','עולה','עולים','שווה','בסך','של','במשך','תוך','היעד','יעד','מטרה','בעוד','עוד','לקנות','חדש','חדשה','כסף','בשביל','עבור','ל','תוכנית','תכנית','חיסכון','חסכון'];
+
+  function extractGoalName(text) {
+    let m = text.match(/(?:לחסוך|לחסך|חוסך|חסכון|חיסכון|לקנות|יעד|מטרה|תוכנית|תכנית)\s*(?:כסף\s*)?(?:ל|עבור|בשביל)\s*([֐-׿a-zA-Z"'׳״ ]+)/);
+    if (!m) m = text.match(/(?:ל|עבור|בשביל)\s*([֐-׿]{3,})/);
+    if (!m) return null;
+
+    let words = m[1].trim().split(/\s+/);
+    const out = [];
+    for (const w of words) {
+      const bare = w.replace(/^ה/, '');
+      if (GOAL_FILLER.includes(w) || GOAL_FILLER.includes(bare)) break;
+      if (/^\d/.test(w)) break;
+      out.push(w);
+      if (out.length === 3) break;
+    }
+    const name = out.join(' ').trim();
+    if (!name || name.length < 2) return null;
+    if (/^(חיסכון|חסכון|מניות|השקעות)$/.test(name)) return null;
+    return name;
+  }
+
+  /* ================= המנתח הראשי ================= */
+
+  function parse(raw) {
+    const text = normalize(raw);
+    const t = text.toLowerCase();
+    const nums = findNumbers(text);
+    const amount = nums.length ? nums[0].value : null;
+    const maxNum = nums.length ? Math.max(...nums.map(n => n.value)) : null;
+
+    /* --- פקודות מערכת --- */
+    if (/^(עזרה|help|\?|מה אפשר|מה אתה יודע)/.test(t))
+      return { intent: 'help' };
+
+    if (/^(בטל|ביטול|undo|טעות|תבטל)/.test(t))
+      return { intent: 'undo' };
+
+    if (/^(איפוס|אפס|reset|תמחק הכל|מחק הכל)/.test(t))
+      return { intent: 'reset' };
+
+    if (/(דוח|דו"ח|סיכום|סטטוס|מצב|כמה נשאר|מה המצב|תמונת מצב|כמה יש לי)/.test(t) && !nums.length)
+      return { intent: 'report' };
+
+    /* --- שאילתה: כמה הוצאתי על X --- */
+    if (/כמה\s+(?:הוצאתי|בזבזתי|שילמתי)/.test(t))
+      return { intent: 'query', category: explicitCategory(text) };
+
+    /* --- מחיקה --- */
+    if (/^(תמחק|מחק|הסר|תסיר)/.test(t)) {
+      if (/יעד|תוכנית|תכנית|חיסכון ל/.test(t)) return { intent: 'deleteGoal', name: extractGoalName(text) };
+      if (/כרטיס|אשראי/.test(t)) return { intent: 'deleteCard', name: detectCardName(text) };
+      if (/חוב|הלוואה/.test(t)) return { intent: 'deleteDebt', name: cleanNote(text, ['תמחק','מחק','חוב','הלוואה']) };
+      return { intent: 'unknown', text };
+    }
+
+    /* --- משכורת --- */
+    if (/(משכורת|שכר|מרוויח|מרויח|הכנסה חודשית|משתכר)/.test(t) && amount != null && !/בונוס/.test(t)) {
+      const day = (text.match(/(?:ב|ל)?(\d{1,2})\s*(?:לחודש|בחודש)/) || [])[1];
+      return { intent: 'salary', amount: maxNum, salaryDay: day ? parseInt(day, 10) : null };
+    }
+
+    /* --- כרטיס אשראי (הגדרה) --- */
+    if (/(מסגרת|כרטיס אשראי|יש לי כרטיס|תוסיף כרטיס|הוסף כרטיס)/.test(t) && !/שילמתי|קניתי|הוצאתי/.test(t)) {
+      const limit = maxNum;
+      const billing = (text.match(/(?:חיוב|נגבה|מחויב)\s*(?:ב|ה)?(\d{1,2})/) || [])[1];
+      return {
+        intent: 'card',
+        name: detectCardName(text) || 'אשראי',
+        limit: limit,
+        billingDay: billing ? parseInt(billing, 10) : null
+      };
+    }
+
+    /* --- חובות --- */
+    if (/(חוב|חובות|הלוואה|הלוואות|מינוס|אוברדרפט)/.test(t) && amount != null) {
+      const monthly = (function () {
+        const m = text.match(/(?:החזר|מחזיר|תשלום חודשי|כל חודש|בחודש)\s*(?:של\s*)?(\d[\d,]*)/);
+        if (m) return parseFloat(m[1].replace(/,/g, ''));
+        if (nums.length > 1) return Math.min(...nums.map(n => n.value));
+        return null;
+      })();
+      const paying = /(שילמתי|החזרתי|הפחתתי)/.test(t);
+      let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי']);
+      if (!name) name = /מינוס|אוברדרפט/.test(t) ? 'מינוס בבנק' : 'הלוואה';
+      return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly };
+    }
+
+    /* --- הפקדה ליעד קיים --- */
+    if (/(הפקדתי|הפקדה|שמתי בצד|העברתי לחיסכון|שמתי|חסכתי|הפרשתי)/.test(t) && amount != null) {
+      const gname = extractGoalName(text);
+      if (gname) return { intent: 'goalDeposit', name: gname, amount };
+    }
+
+    /* --- יעד חיסכון --- */
+    const wantsGoal = /(לחסוך|לחסך|חוסך|יעד|מטרה|תוכנית חיסכון|תכנית חיסכון|רוצה לקנות)/.test(t);
+    if (wantsGoal) {
+      const gname = extractGoalName(text);
+      const months = findMonths(text);
+      if (gname && maxNum) {
+        return { intent: 'goal', name: gname, target: maxNum, months: months || 12 };
+      }
+    }
+
+    /* --- הפרשות קבועות: חיסכון / מניות --- */
+    const percent = findPercent(text);
+    const isStocks = /(מניות|בורסה|השקעה|השקעות|קרן|אתפ|etf|s&p|סנופי)/.test(t);
+    const isSavings = /(חיסכון|חסכון|לחסוך בצד|קופת גמל|פנסיה)/.test(t);
+    if ((isStocks || isSavings) && (amount != null || percent != null)) {
+      return {
+        intent: 'allocation',
+        kind: isStocks ? 'stocks' : 'savings',
+        value: percent != null ? percent : maxNum,
+        isPercent: percent != null
+      };
+    }
+
+    /* --- הגבלה חודשית --- */
+    if (/(הגבלה|הגבל|מגבלה|תקרה|מקסימום|לא יותר מ|תגביל|תקציב ל)/.test(t) && amount != null) {
+      return { intent: 'limit', category: explicitCategory(text), amount: maxNum };
+    }
+
+    /* --- הכנסה חד־פעמית --- */
+    if (/(קיבלתי|נכנס לי|בונוס|החזר מס|מענק|הכנסה|רווח|מכרתי|החזירו לי|זיכוי)/.test(t) && amount != null) {
+      return {
+        intent: 'income',
+        amount,
+        note: cleanNote(text, ['קיבלתי','נכנס','לי','הכנסה','רווח','מכרתי','החזירו','זיכוי']) || 'הכנסה',
+        date: detectDate(text)
+      };
+    }
+
+    /* --- הוצאה (ברירת מחדל כשיש סכום) --- */
+    if (amount != null) {
+      const cardName = /(שילמתי|קניתי|הוצאתי|באשראי|בכרטיס)/.test(t) || detectCardName(text)
+        ? detectCardName(text) : null;
+      return {
+        intent: 'expense',
+        amount,
+        category: detectCategory(text),
+        note: cleanNote(text) || detectCategory(text),
+        cardName,
+        date: detectDate(text)
+      };
+    }
+
+    return { intent: 'unknown', text };
+  }
+
+  return { parse, CATEGORIES, categoryIcon, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote };
+})();

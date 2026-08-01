@@ -1,0 +1,241 @@
+/* render.js — ציור המסכים מתוך המצב */
+window.Render = (function () {
+
+  const M = U.money;
+
+  function empty(msg) {
+    return '<div class="empty">' + msg + '</div>';
+  }
+
+  function barClass(p) {
+    if (p >= 100) return 'bad';
+    if (p >= 80) return 'warn';
+    return 'good';
+  }
+
+  /* ---------------- KPI ---------------- */
+
+  function dashboard() {
+    const plan = Store.monthlyPlan();
+    const s = Store.get();
+
+    const free = document.getElementById('kpiFree');
+    free.textContent = M(plan.free);
+    free.className = 'kpi-value ' + (plan.free < 0 ? 'bad' : plan.free < plan.income * 0.1 ? 'warn' : 'good');
+    document.getElementById('kpiFreeSub').textContent =
+      plan.daysLeft ? 'ל־' + plan.daysLeft + ' ימים שנותרו' : 'סוף החודש';
+    const usedPct = U.clamp(U.pct(plan.spent + plan.committed, plan.income || 1), 0, 100);
+    const fb = document.getElementById('kpiFreeBar');
+    fb.style.width = usedPct + '%';
+    fb.className = 'bar-fill ' + barClass(usedPct);
+
+    document.getElementById('kpiIncome').textContent = M(plan.income);
+    document.getElementById('kpiIncomeSub').textContent =
+      s.profile.salary ? 'משכורת: ' + M(s.profile.salary) : 'עוד לא הוגדרה משכורת';
+
+    document.getElementById('kpiExpense').textContent = M(plan.spent);
+    document.getElementById('kpiExpenseSub').textContent =
+      plan.income ? plan.spentPct + '% מההכנסה' : Store.txOfMonth().length + ' עסקאות';
+
+    const daily = document.getElementById('kpiDaily');
+    daily.textContent = M(plan.dailyPace);
+    daily.className = 'kpi-value ' + (plan.dailyPace < 0 ? 'bad' : '');
+    document.getElementById('kpiDailySub').textContent =
+      plan.dailyPace < 0 ? 'חריגה — כדאי לבלום' : 'כדי לסיים את החודש באיזון';
+
+    document.getElementById('breakdownMonth').textContent = U.monthLabel(plan.month);
+    breakdown();
+    limits();
+    planList(plan);
+  }
+
+  function breakdown() {
+    const box = document.getElementById('breakdown');
+    const cats = Store.byCategory();
+    if (!cats.length) { box.innerHTML = empty('אין עדיין הוצאות החודש.<br>כתוב בצ\'אט «קניתי קפה 28» ונתחיל.'); return; }
+    const total = cats.reduce((s, c) => s + c[1], 0);
+    box.innerHTML = cats.map(([cat, val]) => {
+      const p = U.pct(val, total);
+      const limit = Store.get().limits[cat];
+      const lp = limit ? U.pct(val, limit) : null;
+      return '<div class="block">'
+        + '<div class="block-head"><strong>' + Parser.categoryIcon(cat) + ' ' + U.esc(cat) + '</strong>'
+        + '<span>' + M(val) + ' · ' + p + '%'
+        + (limit ? ' <span class="pill ' + barClass(lp) + '">מתוך ' + M(limit) + '</span>' : '') + '</span></div>'
+        + '<div class="bar"><div class="bar-fill ' + (limit ? barClass(lp) : '') + '" style="width:' + U.clamp(limit ? lp : p, 2, 100) + '%"></div></div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function limits() {
+    const box = document.getElementById('limitsList');
+    const lim = Store.get().limits;
+    const keys = Object.keys(lim);
+    if (!keys.length) { box.innerHTML = empty('לא הוגדרו הגבלות.<br>«הגבלה למסעדות 800»'); return; }
+    box.innerHTML = keys.map(cat => {
+      const spent = Store.categorySpent(cat);
+      const p = U.pct(spent, lim[cat]);
+      const left = lim[cat] - spent;
+      return '<div class="block">'
+        + '<div class="block-head"><strong>' + Parser.categoryIcon(cat) + ' ' + U.esc(cat) + '</strong>'
+        + '<span>' + M(spent) + ' / ' + M(lim[cat]) + '</span></div>'
+        + '<div class="bar"><div class="bar-fill ' + barClass(p) + '" style="width:' + U.clamp(p, 2, 100) + '%"></div></div>'
+        + '<div class="row-sub">' + (left >= 0 ? 'נשאר ' + M(left) : '🚨 חריגה של ' + M(-left))
+        + ' · ' + p + '%</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function planList(plan) {
+    const box = document.getElementById('planList');
+    const rows = [
+      ['💰', 'הכנסות', plan.income, 'good'],
+      ['🛍️', 'הוצאות שנרשמו', -plan.spent, 'bad'],
+      ['🏦', 'החזרי חובות', -plan.debts, 'bad'],
+      ['🐖', 'הפרשה לחיסכון', -plan.savings, 'bad'],
+      ['📈', 'הפרשה למניות', -plan.stocks, 'bad'],
+      ['🎯', 'יעדי חיסכון', -plan.goals, 'bad']
+    ].filter(r => r[2] !== 0);
+
+    if (!rows.length) { box.innerHTML = empty('אין עדיין נתונים לתוכנית.'); return; }
+
+    box.innerHTML = rows.map(([ico, label, val, cls]) =>
+      '<div class="row"><div class="row-ico">' + ico + '</div>'
+      + '<div class="row-main"><div class="row-title">' + label + '</div></div>'
+      + '<div class="row-amt ' + (val >= 0 ? 'good' : 'bad') + '">' + M(val, { plus: true }) + '</div></div>'
+    ).join('')
+      + '<div class="row"><div class="row-ico">🧮</div>'
+      + '<div class="row-main"><div class="row-title">נשאר פנוי</div>'
+      + '<div class="row-sub">' + (plan.daysLeft ? M(plan.dailyPace) + ' ליום ל־' + plan.daysLeft + ' ימים' : 'סוף החודש') + '</div></div>'
+      + '<div class="row-amt ' + (plan.free >= 0 ? 'good' : 'bad') + '">' + M(plan.free) + '</div></div>';
+  }
+
+  /* ---------------- עסקאות ---------------- */
+
+  function transactions() {
+    const box = document.getElementById('txList');
+    const filter = document.getElementById('txFilter').value;
+    let list = Store.get().transactions;
+    if (filter === 'month') list = Store.txOfMonth();
+    else if (filter === 'prev') list = Store.txOfMonth(U.prevMonth());
+
+    if (!list.length) { box.innerHTML = empty('אין עסקאות להצגה.'); return; }
+
+    const sorted = list.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    let html = '', lastDate = null;
+    for (const t of sorted) {
+      if (t.date !== lastDate) {
+        const dayTotal = sorted.filter(x => x.date === t.date && x.type === 'expense')
+          .reduce((s, x) => s + x.amount, 0);
+        html += '<div class="date-sep">' + U.niceDate(t.date) + (dayTotal ? ' · ' + M(dayTotal) : '') + '</div>';
+        lastDate = t.date;
+      }
+      const card = t.cardId ? Store.get().cards.find(c => c.id === t.cardId) : null;
+      html += '<div class="row">'
+        + '<div class="row-ico">' + (t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
+        + '<div class="row-main">'
+        + '<div class="row-title">' + U.esc(t.note || t.category) + '</div>'
+        + '<div class="row-sub">' + U.esc(t.category) + (card ? ' · ' + U.esc(card.name) : '') + '</div>'
+        + '</div>'
+        + '<div class="row-amt ' + (t.type === 'income' ? 'good' : 'bad') + '">'
+        + (t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
+        + '<button class="row-del" data-del-tx="' + t.id + '" title="מחק">✕</button>'
+        + '</div>';
+    }
+    box.innerHTML = html;
+  }
+
+  /* ---------------- כרטיסים וחובות ---------------- */
+
+  function cards() {
+    const box = document.getElementById('cardsList');
+    const list = Store.get().cards;
+    if (!list.length) { box.innerHTML = empty('לא הוגדרו כרטיסים.<br>«כרטיס ויזה מסגרת 10000»'); return; }
+    box.innerHTML = list.map(c => {
+      const used = Store.cardUsed(c.id);
+      const p = c.limit ? U.pct(used, c.limit) : 0;
+      return '<div class="block">'
+        + '<div class="block-head"><strong>💳 ' + U.esc(c.name) + '</strong>'
+        + '<span>' + M(used) + ' / ' + M(c.limit) + ' <button class="row-del" data-del-card="' + c.id + '">✕</button></span></div>'
+        + '<div class="bar"><div class="bar-fill ' + barClass(p) + '" style="width:' + U.clamp(p, 2, 100) + '%"></div></div>'
+        + '<div class="row-sub">פנוי במסגרת: ' + M(Math.max(0, c.limit - used)) + ' · ' + p + '% ניצול'
+        + (c.billingDay ? ' · חיוב ב־' + c.billingDay + ' לחודש' : '') + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function debts() {
+    const box = document.getElementById('debtsList');
+    const list = Store.get().debts;
+    if (!list.length) { box.innerHTML = empty('אין חובות רשומים 🎉<br>«יש לי הלוואה 20000 החזר 800»'); return; }
+    const total = Store.totalDebt();
+    box.innerHTML = list.map(d => {
+      const months = d.monthly ? Math.ceil(d.amount / d.monthly) : null;
+      return '<div class="block">'
+        + '<div class="block-head"><strong>🏦 ' + U.esc(d.name) + '</strong>'
+        + '<span>' + M(d.amount) + ' <button class="row-del" data-del-debt="' + d.id + '">✕</button></span></div>'
+        + '<div class="bar"><div class="bar-fill bad" style="width:' + U.clamp(U.pct(d.amount, total), 2, 100) + '%"></div></div>'
+        + '<div class="row-sub">' + (d.monthly ? 'החזר ' + M(d.monthly) + ' בחודש · ייסגר בעוד ' + months + ' חודשים' : 'לא הוגדר החזר חודשי') + '</div>'
+        + '</div>';
+    }).join('')
+      + '<div class="row"><div class="row-ico">Σ</div><div class="row-main"><div class="row-title">סה"כ חובות</div>'
+      + '<div class="row-sub">החזר חודשי כולל: ' + M(Store.debtMonthly()) + '</div></div>'
+      + '<div class="row-amt bad">' + M(total) + '</div></div>';
+  }
+
+  /* ---------------- יעדים והפרשות ---------------- */
+
+  function goals() {
+    const box = document.getElementById('goalsList');
+    const list = Store.get().goals;
+    if (!list.length) { box.innerHTML = empty('אין יעדי חיסכון.<br>«אני רוצה לחסוך לרכב 15000 ב־4 חודשים»'); return; }
+    box.innerHTML = list.map(g => {
+      const st = Store.goalStatus(g);
+      return '<div class="block">'
+        + '<div class="block-head"><strong>🎯 ' + U.esc(g.name) + '</strong>'
+        + '<span>' + M(g.saved) + ' / ' + M(g.target)
+        + ' <button class="row-del" data-del-goal="' + g.id + '">✕</button></span></div>'
+        + '<div class="bar"><div class="bar-fill ' + (st.done ? 'good' : '') + '" style="width:' + U.clamp(st.progress, 2, 100) + '%"></div></div>'
+        + '<div class="row-sub">'
+        + (st.done
+          ? '🎉 היעד הושג!'
+          : 'נשאר ' + M(st.left) + ' · ' + M(st.need) + ' לחודש · ' + st.months + ' חודשים (עד ' + U.monthLabel(U.monthKey(g.deadline)) + ')'
+            + (st.paid ? ' · הופקד החודש ' + M(st.paid) : ''))
+        + ' · ' + st.progress + '%</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function allocations() {
+    const box = document.getElementById('allocList');
+    const a = Store.get().allocations;
+    const keys = Object.keys(a);
+    const income = Store.monthIncome();
+    if (!keys.length) { box.innerHTML = empty('לא הוגדרו הפרשות קבועות.<br>«להפריש 1000 לחיסכון» · «10% למניות»'); return; }
+    const LABEL = { savings: ['🐖', 'חיסכון'], stocks: ['📈', 'מניות והשקעות'] };
+    box.innerHTML = keys.map(k => {
+      const [ico, label] = LABEL[k] || ['💠', k];
+      const amt = Store.allocAmount(k);
+      return '<div class="row"><div class="row-ico">' + ico + '</div>'
+        + '<div class="row-main"><div class="row-title">' + label + '</div>'
+        + '<div class="row-sub">' + (a[k].kind === 'percent' ? a[k].value + '% מההכנסה' : 'סכום קבוע')
+        + (income ? ' · ' + U.pct(amt, income) + '% מההכנסה' : '') + '</div></div>'
+        + '<div class="row-amt">' + M(amt) + '</div></div>';
+    }).join('')
+      + '<div class="row"><div class="row-ico">Σ</div>'
+      + '<div class="row-main"><div class="row-title">סה"כ הפרשות + יעדים</div>'
+      + '<div class="row-sub">' + (income ? U.pct(Store.totalAllocations() + Store.goalsMonthly(), income) + '% מההכנסה החודשית' : '') + '</div></div>'
+      + '<div class="row-amt good">' + M(Store.totalAllocations() + Store.goalsMonthly()) + '</div></div>';
+  }
+
+  function all() {
+    dashboard();
+    transactions();
+    cards();
+    debts();
+    goals();
+    allocations();
+  }
+
+  return { all, dashboard, transactions, cards, debts, goals, allocations };
+})();

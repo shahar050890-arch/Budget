@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1420">
+<title>התקציב שלי — צ'אט</title>
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo">₪</span>
+    <div>
+      <h1>התקציב שלי</h1>
+      <p id="topbarSubtitle">כותבים בצ'אט — הכל מסתדר לבד</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="btnExport" title="גיבוי לקובץ">⬇︎</button>
+    <button class="icon-btn" id="btnImport" title="שחזור מקובץ">⬆︎</button>
+    <button class="icon-btn danger" id="btnReset" title="איפוס הכל">⟲</button>
+    <input type="file" id="fileInput" accept="application/json" hidden>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-view="chat">צ'אט</button>
+  <button class="tab" data-view="dash">מצב כספי</button>
+  <button class="tab" data-view="tx">עסקאות</button>
+  <button class="tab" data-view="cards">אשראי וחובות</button>
+  <button class="tab" data-view="goals">חיסכון והשקעות</button>
+</nav>
+
+<main class="layout">
+
+  <!-- ============ CHAT ============ -->
+  <section class="view active" id="view-chat">
+    <div class="chat-wrap">
+      <div class="chat-log" id="chatLog"></div>
+      <div class="quick-chips" id="quickChips"></div>
+      <form class="composer" id="composer" autocomplete="off">
+        <input type="text" id="chatInput" placeholder="לדוגמה: קניתי קפה ב־28 ₪" aria-label="הודעה">
+        <button type="submit" class="send-btn" aria-label="שלח">שלח</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="view" id="view-dash">
+    <div class="grid">
+      <div class="card kpi-card">
+        <span class="kpi-label">פנוי החודש</span>
+        <strong class="kpi-value" id="kpiFree">—</strong>
+        <span class="kpi-sub" id="kpiFreeSub"></span>
+        <div class="bar"><div class="bar-fill" id="kpiFreeBar"></div></div>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">הכנסות החודש</span>
+        <strong class="kpi-value good" id="kpiIncome">—</strong>
+        <span class="kpi-sub" id="kpiIncomeSub"></span>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">הוצאות החודש</span>
+        <strong class="kpi-value bad" id="kpiExpense">—</strong>
+        <span class="kpi-sub" id="kpiExpenseSub"></span>
+      </div>
+      <div class="card kpi-card">
+        <span class="kpi-label">קצב יומי מומלץ</span>
+        <strong class="kpi-value" id="kpiDaily">—</strong>
+        <span class="kpi-sub" id="kpiDailySub"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>פילוח הוצאות החודש</h2><span class="muted" id="breakdownMonth"></span></div>
+      <div class="breakdown" id="breakdown"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>הגבלות חודשיות</h2><span class="muted">כתבו בצ'אט: «הגבלה לאוכל 1500»</span></div>
+      <div id="limitsList"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>תוכנית חודשית</h2></div>
+      <div id="planList"></div>
+    </div>
+  </section>
+
+  <!-- ============ TRANSACTIONS ============ -->
+  <section class="view" id="view-tx">
+    <div class="card">
+      <div class="card-head">
+        <h2>עסקאות</h2>
+        <select id="txFilter" class="select">
+          <option value="month">החודש</option>
+          <option value="prev">חודש קודם</option>
+          <option value="all">הכל</option>
+        </select>
+      </div>
+      <div id="txList"></div>
+    </div>
+  </section>
+
+  <!-- ============ CARDS & DEBTS ============ -->
+  <section class="view" id="view-cards">
+    <div class="card">
+      <div class="card-head"><h2>כרטיסי אשראי</h2><span class="muted">«כרטיס ויזה מסגרת 10000»</span></div>
+      <div id="cardsList"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>חובות והלוואות</h2><span class="muted">«חוב הלוואה 20000 החזר 800»</span></div>
+      <div id="debtsList"></div>
+    </div>
+  </section>
+
+  <!-- ============ GOALS ============ -->
+  <section class="view" id="view-goals">
+    <div class="card">
+      <div class="card-head"><h2>יעדי חיסכון</h2><span class="muted">«לחסוך לרכב 15000 ב־4 חודשים»</span></div>
+      <div id="goalsList"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>הפרשות קבועות</h2><span class="muted">«להפריש 1000 לחיסכון», «10% למניות»</span></div>
+      <div id="allocList"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="src/util.js"></script>
+<script src="src/store.js"></script>
+<script src="src/parser.js"></script>
+<script src="src/engine.js"></script>
+<script src="src/render.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>
