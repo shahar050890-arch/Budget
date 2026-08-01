@@ -13,7 +13,9 @@ window.Store = (function () {
     debts: [],          // {id,name,amount,monthly,interest}
     goals: [],          // {id,name,target,saved,deadline,months,createdAt,done}
     limits: {},         // {category: amount}
-    customCategories: [], // קטגוריות שהמשתמש המציא: [{name, icon}]
+    customCategories: [], // קטגוריות שהמשתמש המציא: [{name, icon, flex}]
+    events: [],         // אירועים לעקוב אחריהם: [{id,name,budget,startDate,closed}]
+    pendingAsk: null,   // שאלה פתוחה שממתינה לתשובה, למשל על מה הייתה ההעברה
     allocations: {},    // {savings|stocks: {kind:'fixed'|'percent', value}}
     chat: [],           // {role:'me'|'bot', html, ts}
     setup: { step: 0, done: false },  // אשף ההקמה בשימוש ראשון
@@ -414,6 +416,8 @@ window.Store = (function () {
     }
     // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
     if (t.type === 'deposit') { b[t.to] += dir * t.amount; return; }
+    // סליקת אשראי: הכסף עוזב את העו"ש עבור הוצאות שכבר נרשמו
+    if (t.type === 'settlement') { b.checking -= dir * t.amount; return; }
     if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
     if (t.cardId) return;
     b[t.source || 'checking'] -= dir * t.amount;
@@ -463,6 +467,110 @@ window.Store = (function () {
     return t;
   }
 
+  /* ---------- אירועים ---------- */
+
+  function addEvent(name, budget) {
+    const e = {
+      id: U.uid(), name, budget: budget || 0,
+      startDate: U.todayISO(), closed: false
+    };
+    state.events.push(e);
+    save();
+    return e;
+  }
+
+  function findEvent(name) {
+    if (!name) return null;
+    const n = String(name).trim();
+    return state.events.find(e => e.name === n)
+      || state.events.find(e => e.name.includes(n) || n.includes(e.name)) || null;
+  }
+
+  function openEvents() {
+    return state.events.filter(e => !e.closed);
+  }
+
+  /** כל ההוצאות ששויכו לאירוע, בכל החודשים */
+  function eventTx(eventId) {
+    return state.transactions.filter(t => t.eventId === eventId && t.type === 'expense');
+  }
+
+  function eventTotal(eventId) {
+    return eventTx(eventId).reduce((s, t) => s + t.amount, 0);
+  }
+
+  function eventStatus(e) {
+    const spent = eventTotal(e.id);
+    const list = eventTx(e.id);
+    const byCat = {};
+    list.forEach(t => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+    return {
+      spent, count: list.length,
+      categories: Object.entries(byCat).sort((a, b) => b[1] - a[1]),
+      budget: e.budget,
+      left: e.budget ? e.budget - spent : null,
+      progress: e.budget ? U.pct(spent, e.budget) : null,
+      over: e.budget ? spent > e.budget : false,
+      days: Math.max(1, Math.round((new Date(U.todayISO()) - new Date(e.startDate)) / 86400000) + 1)
+    };
+  }
+
+  function closeEvent(id) {
+    const e = state.events.find(x => x.id === id);
+    if (e) { e.closed = true; e.endDate = U.todayISO(); save(); }
+    return e;
+  }
+
+  function removeEvent(id) {
+    state.events = state.events.filter(e => e.id !== id);
+    state.transactions.forEach(t => { if (t.eventId === id) t.eventId = null; });
+    save();
+  }
+
+  /* ---------- סליקת אשראי ---------- */
+
+  /** כל החיובים שנרשמו על כרטיס, בכל החודשים */
+  function cardChargesAllTime(cardId) {
+    return state.transactions
+      .filter(t => t.type === 'expense' && t.cardId === cardId)
+      .reduce((s, t) => s + t.amount, 0);
+  }
+
+  /** כמה כבר ירד בפועל מהעו"ש עבור הכרטיס */
+  function cardSettled(cardId) {
+    return state.transactions
+      .filter(t => t.type === 'settlement' && t.cardId === cardId)
+      .reduce((s, t) => s + t.amount, 0);
+  }
+
+  /** יתרת החוב הפתוחה לכרטיס — מה שנרשם ועוד לא ירד */
+  function cardOutstanding(cardId) {
+    return Math.max(0, cardChargesAllTime(cardId) - cardSettled(cardId));
+  }
+
+  /**
+   * ירידת חיוב האשראי מהעו"ש. ההוצאות עצמן כבר נרשמו ביום הקנייה,
+   * ולכן זו אינה הוצאה חדשה — רק הכסף שעוזב את החשבון.
+   */
+  function addSettlement(cardId, amount, note) {
+    const t = {
+      id: U.uid(), type: 'settlement', cardId, amount,
+      note: note || 'חיוב אשראי', date: U.todayISO(), category: 'אשראי'
+    };
+    state.transactions.unshift(t);
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
+  function removeCustomCategory(name) {
+    const had = state.customCategories.some(c => c.name === name);
+    state.customCategories = state.customCategories.filter(c => c.name !== name);
+    delete state.limits[name];
+    save();
+    return had;
+  }
+
   /* ---------- יתרות והון ---------- */
 
   function setBalance(kind, amount) {
@@ -475,9 +583,9 @@ window.Store = (function () {
     return Object.keys(state.declared).length > 0;
   }
 
-  /** חיובי אשראי שנרשמו וטרם ירדו מהעו"ש */
+  /** חיובי אשראי שנרשמו וטרם ירדו מהעו"ש, על פני כל החודשים */
   function pendingCardCharges() {
-    return state.cards.reduce((s, c) => s + cardUsed(c.id), 0);
+    return state.cards.reduce((s, c) => s + cardOutstanding(c.id), 0);
   }
 
   function totalAssets() {
@@ -615,6 +723,8 @@ window.Store = (function () {
     findCard, upsertCard, removeCard,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,
-    setLimit, setAllocation, pushChat, addCustomCategory
+    setLimit, setAllocation, pushChat, addCustomCategory, removeCustomCategory,
+    addEvent, findEvent, openEvents, eventTx, eventTotal, eventStatus, closeEvent, removeEvent,
+    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement
   };
 })();

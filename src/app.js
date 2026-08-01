@@ -103,6 +103,7 @@
     if (s.profile.salary) list.push('מה אתה ממליץ?');
     if (Store.hasBalances()) list.push('אני יכול לקנות טלוויזיה ב-3000?');
     if (s.debts.length) list.push('עדיף להחזיר את החוב או לחסוך?');
+    if (!s.events.length) list.push('אירוע חדש יום הולדת');
     list.push('מה המצב?');
     if (s.transactions.length) list.push('כמה הוצאתי על מזון?');
     if (s.transactions.length) list.push('סיכום החודש שעבר');
@@ -130,7 +131,7 @@
   /* ---------------- מחיקות מהרשימות ---------------- */
 
   document.addEventListener('click', e => {
-    const btn = e.target.closest('[data-del-tx],[data-del-card],[data-del-debt],[data-del-goal]');
+    const btn = e.target.closest('[data-del-tx],[data-del-card],[data-del-debt],[data-del-goal],[data-del-event]');
     if (!btn) return;
     const d = btn.dataset;
 
@@ -148,6 +149,11 @@
       Store.snapshot('מחיקת חוב');
       Store.removeDebt(d.delDebt);
       toast('החוב נמחק');
+    } else if (d.delEvent) {
+      if (!confirm('למחוק את האירוע? ההוצאות עצמן יישארו רשומות.')) return;
+      Store.snapshot('מחיקת אירוע');
+      Store.removeEvent(d.delEvent);
+      toast('האירוע נמחק');
     } else if (d.delGoal) {
       if (!confirm('למחוק את יעד החיסכון?')) return;
       Store.snapshot('מחיקת יעד');

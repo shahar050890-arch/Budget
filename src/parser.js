@@ -59,17 +59,25 @@ window.Parser = (function () {
     return cc ? cc.icon : '🏷️';
   }
 
+  /**
+   * האם המילה מופיעה בטקסט כמילה שלמה (עם אותיות שימוש כמו ב/ל/מה בהתחלה).
+   * בלי זה "בר" נתפס בתוך "העברתי" ו"גן" בתוך "מגן".
+   */
+  function wordMatch(text, word) {
+    return new RegExp('(?:^|\\s)[בלהומשכ]{0,2}' + escapeRe(word) + '(?=\\s|$|[,.?!:;])').test(text);
+  }
+
   function detectCategory(text) {
     const t = ' ' + text + ' ';
     let best = null, bestLen = 0;
     // קטגוריות שהמשתמש הגדיר מקבלות עדיפות — הוא בחר אותן במפורש
     for (const c of customCats()) {
-      if (t.includes(c.name) && c.name.length > bestLen) { best = c.name; bestLen = c.name.length; }
+      if (wordMatch(t, c.name) && c.name.length > bestLen) { best = c.name; bestLen = c.name.length; }
     }
     if (best) return best;
     for (const c of CATEGORIES) {
       for (const w of c.words) {
-        if (t.includes(w) && w.length > bestLen) { best = c.name; bestLen = w.length; }
+        if (wordMatch(t, w) && w.length > bestLen) { best = c.name; bestLen = w.length; }
       }
     }
     return best || 'כללי';
@@ -102,6 +110,37 @@ window.Parser = (function () {
     return matches[matches.length - 1].replace(/^ה/, '');
   }
 
+  /** אירוע פתוח שהוזכר בהודעה */
+  function detectEvent(text) {
+    let events = [];
+    try { events = (window.Store && Store.openEvents()) || []; } catch (e) { return null; }
+    let best = null, bestLen = 0;
+    for (const e of events) {
+      if (text.includes(e.name) && e.name.length > bestLen) { best = e; bestLen = e.name.length; }
+      else {
+        // התאמה חלקית: מספיק שכל מילות האירוע מופיעות בהודעה
+        const words = e.name.split(/\s+/).filter(w => w.length > 2);
+        if (words.length && words.every(w => text.includes(w)) && e.name.length > bestLen) {
+          best = e; bestLen = e.name.length;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** שם האירוע מתוך "אירוע חדש: יום הולדת לשירה" */
+  function extractEventName(text) {
+    let m = text.match(/(?:אירוע|ארוע|תפתח לי אירוע|פתח אירוע|מעקב)\s*(?:חדש|חדשה)?\s*[:־-]?\s*(.+)/);
+    if (!m) return null;
+    let name = m[1];
+    name = name.replace(/\d[\d,]*(?:\.\d+)?/g, ' ')
+      .replace(/(?:תקציב|בתקציב|עד|ש"ח|שקל|שקלים|₪)/g, ' ')
+      .replace(/[?!.,:]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return name.length >= 2 ? name : null;
+  }
+
   /* ---------------- חשבונות ---------------- */
 
   const ACCOUNTS = {
@@ -132,6 +171,27 @@ window.Parser = (function () {
       for (const w of ACCOUNTS[key].words) {
         const re = new RegExp('(?:^|\\s)ל' + escapeRe(w.replace(/^ה/, '')) + '(?:\\s|$|[,.?!])');
         if (re.test(text)) return key;
+      }
+    }
+    return null;
+  }
+
+  /* ---------------- אמצעי תשלום ---------------- */
+
+  const METHODS = [
+    { key: 'ביט',    words: ['ביט', 'bit'] },
+    { key: 'פייבוקס', words: ['פייבוקס', 'paybox', 'פיי בוקס'] },
+    { key: 'העברה בנקאית', words: ['העברה בנקאית', 'העברה לחשבון', 'זיכוי בנקאי'] },
+    { key: 'מזומן',  words: ['מזומן'] },
+    { key: 'צ\'ק',   words: ['צ\'ק', 'שיק', 'המחאה'] },
+    { key: 'אפליקציה', words: ['אפליקציה', 'apple pay', 'google pay'] }
+  ];
+
+  function detectMethod(text) {
+    const t = ' ' + text.toLowerCase() + ' ';
+    for (const m of METHODS) {
+      for (const w of m.words) {
+        if (new RegExp('(?:^|\\s)[בהו]?' + escapeRe(w) + '(?:\\s|$|[,.?!])', 'i').test(t)) return m.key;
       }
     }
     return null;
@@ -225,6 +285,15 @@ window.Parser = (function () {
   }
 
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /** מסיר מילים שלמות מתוך משפט — בלי לפגוע באותיות בתוך מילים אחרות */
+  function stripWords(text, words) {
+    let t = ' ' + text + ' ';
+    words.sort((a, b) => b.length - a.length).forEach(w => {
+      t = t.replace(new RegExp('(?:^|\\s)[בלהומשכ]{0,2}' + escapeRe(w) + '(?=\\s|$|[,.?!:;])', 'g'), ' ');
+    });
+    return t.replace(/\d[\d,]*(?:\.\d+)?/g, ' ').replace(/[?!.,:;]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
 
   /** ניקוי שם של דבר שנשאלה עליו שאלה: בלי פיסוק ובלי אותיות יחס תלושות */
   function tidyThing(s) {
@@ -325,6 +394,21 @@ window.Parser = (function () {
       && /(עדיף|כדאי|או|קודם|מה נכון|מה עדיף)/.test(t))
       return { intent: 'debtVsSave' };
 
+    /* --- ירידת חיוב האשראי מהעו"ש ---
+       דורש פועל של ירידה בפועל, ולא רק את המילה "חיוב" — אחרת
+       "כרטיס ויזה מסגרת 10000 חיוב ב-10" ייקרא כגבייה במקום כהגדרת כרטיס. */
+    if (amount != null
+      && /(אשראי|כרטיס|ויזה|מאסטרקארד|ישראכרט|כאל|מקס)/.test(t)
+      && /(ירד|ירדה|ירדו|נגבה|נגבו|חייבו|הורדה|הורידו|משכו|גבו|חויבתי)/.test(t)
+      && !/מסגרת/.test(t)) {
+      return {
+        intent: 'cardSettlement',
+        cardName: detectCardName(text),
+        amount: maxNum,
+        prevMonth: /(חודש שעבר|החודש שעבר|של חודש|מחודש)/.test(t)
+      };
+    }
+
     /* --- "אותו דבר" בפתיחת חודש --- */
     if (/^(אותו דבר|כמו קודם|כמו תמיד|בלי שינוי|אין שינוי|הכל אותו דבר|כרגיל|לא השתנה)/.test(t))
       return { intent: 'sameAsBefore' };
@@ -347,8 +431,37 @@ window.Parser = (function () {
       return { intent: 'report' };
 
     /* --- שאילתה: כמה הוצאתי על X --- */
-    if (/כמה\s+(?:הוצאתי|בזבזתי|שילמתי)/.test(t))
+    if (/כמה\s+(?:הוצאתי|בזבזתי|שילמתי)/.test(t)) {
+      const ev = detectEvent(text);
+      if (ev) return { intent: 'eventQuery', name: ev.name };
       return { intent: 'query', category: explicitCategory(text) };
+    }
+
+    /* --- ניהול קטגוריות --- */
+    if (/(תפתח|פתח|תוסיף|הוסף|צור|תיצור|תפתחי)\s*(?:לי\s*)?קטגוריה/.test(t)) {
+      return { intent: 'categoryNew', name: stripWords(text,
+        ['תפתח','פתח','תוסיף','הוסף','צור','תיצור','תפתחי','לי','קטגוריה','חדשה','חדש','בשם','של','את']) || null,
+        amount: maxNum };
+    }
+
+    if (/(תמחק|מחק|תסיר|הסר|תוריד|הורד|בטל)\s*(?:לי\s*)?(?:את\s*)?(?:ה)?קטגוריה/.test(t)
+      || /קטגוריה.*(?:תמחק|מחק|תסיר|הסר|תוריד)/.test(t)) {
+      return { intent: 'categoryDelete', name: stripWords(text,
+        ['תמחק','מחק','תסיר','הסר','תוריד','הורד','בטל','לי','את','קטגוריה','של']) || null };
+    }
+
+    /* --- אירועים --- */
+    if (/(אירוע|ארוע)/.test(t)) {
+      if (/(סגור|תסגור|סיים|תסיים|נגמר|הסתיים)/.test(t))
+        return { intent: 'eventClose', name: extractEventName(text) || tidyThing(cleanNote(text, ['סגור','תסגור','סיים','תסיים','אירוע','ארוע'])) };
+      if (/(תמחק|מחק|תסיר|הסר)/.test(t))
+        return { intent: 'eventDelete', name: extractEventName(text) };
+      if (/(חדש|חדשה|תפתח|פתח|תוסיף|הוסף|צור|תיצור|מעקב)/.test(t)) {
+        const budget = /(?:תקציב|עד|בתקציב)/.test(t) ? maxNum : null;
+        return { intent: 'eventNew', name: extractEventName(text), budget };
+      }
+      return { intent: 'eventQuery', name: extractEventName(text) };
+    }
 
     /* --- מחיקה --- */
     if (/^(תמחק|מחק|הסר|תסיר)/.test(t)) {
@@ -475,12 +588,24 @@ window.Parser = (function () {
     if (amount != null) {
       const cardName = /(שילמתי|קניתי|הוצאתי|באשראי|בכרטיס)/.test(t) || detectCardName(text)
         ? detectCardName(text) : null;
+      const method = detectMethod(text);
+      const ev = detectEvent(text);
+      // שם האירוע מוסר לפני זיהוי הקטגוריה: "יום הולדת" הוא גם מילת מפתח
+      // של מתנות, ובלי זה כל הוצאות האירוע היו נבלעות לשם
+      const forCat = ev ? text.split(ev.name).join(' ') : text;
+      let note = cleanNote(text, ev ? [ev.name] : []);
+      const cat = detectCategory(forCat);
       return {
         intent: 'expense',
         amount,
-        category: detectCategory(text),
-        note: cleanNote(text) || detectCategory(text),
+        category: cat,
+        note: note || cat,
         cardName,
+        method,
+        eventId: ev ? ev.id : null,
+        eventName: ev ? ev.name : null,
+        // העברה בביט/פייבוקס בלי הקשר — צריך לשאול על מה זה היה
+        needsCategory: cat === 'כללי' && !!method,
         source: srcAccount || 'checking',   // מאיזה חשבון יצא הכסף
         date: detectDate(text)
       };
@@ -489,5 +614,6 @@ window.Parser = (function () {
     return { intent: 'unknown', text };
   }
 
-  return { parse, CATEGORIES, categoryIcon, isFlexible, guessIcon, extractLimitSubject, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
+  return { parse, CATEGORIES, categoryIcon, isFlexible, guessIcon, extractLimitSubject,
+    METHODS, detectMethod, detectEvent, extractEventName, wordMatch, stripWords, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();
