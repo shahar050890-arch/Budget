@@ -44,9 +44,53 @@ window.Render = (function () {
       plan.dailyPace < 0 ? 'חריגה — כדאי לבלום' : 'כדי לסיים את החודש באיזון';
 
     document.getElementById('breakdownMonth').textContent = U.monthLabel(plan.month);
+    balances();
     breakdown();
     limits();
     planList(plan);
+  }
+
+  function balances() {
+    const box = document.getElementById('balancesList');
+    const s = Store.get();
+    if (!Store.hasBalances()) {
+      box.innerHTML = empty('עוד לא סיפרת לי כמה כסף יש לך.<br>«יש לי בעובר ושב 8000» · «יש לי בחיסכון 20000» · «יש לי במניות 15000»');
+      return;
+    }
+
+    const ROWS = [
+      ['checking', '🏛️', 'עובר ושב'],
+      ['savings', '🐖', 'חיסכון'],
+      ['stocks', '📈', 'מניות']
+    ].filter(r => s.declared[r[0]]);
+
+    const assets = Store.totalAssets();
+    let html = ROWS.map(([k, ico, label]) => {
+      const v = s.balances[k];
+      return '<div class="row"><div class="row-ico">' + ico + '</div>'
+        + '<div class="row-main"><div class="row-title">' + label + '</div>'
+        + '<div class="row-sub">' + (assets ? U.pct(v, assets) + '% מהנכסים' : '') + '</div></div>'
+        + '<div class="row-amt ' + (v < 0 ? 'bad' : '') + '">' + M(v) + '</div></div>';
+    }).join('');
+
+    const pend = Store.pendingCardCharges();
+    const debt = Store.totalDebt();
+    if (pend) html += liability('💳', 'חיובי אשראי צפויים', pend);
+    if (debt) html += liability('🏦', 'חובות והלוואות', debt);
+
+    const net = Store.netWorth();
+    html += '<div class="row"><div class="row-ico">💎</div>'
+      + '<div class="row-main"><div class="row-title">הון נקי</div>'
+      + '<div class="row-sub">נכסים פחות התחייבויות</div></div>'
+      + '<div class="row-amt ' + (net >= 0 ? 'good' : 'bad') + '">' + M(net) + '</div></div>';
+
+    box.innerHTML = html;
+  }
+
+  function liability(ico, label, val) {
+    return '<div class="row"><div class="row-ico">' + ico + '</div>'
+      + '<div class="row-main"><div class="row-title">' + label + '</div></div>'
+      + '<div class="row-amt bad">-' + M(val) + '</div></div>';
   }
 
   function breakdown() {
@@ -237,5 +281,5 @@ window.Render = (function () {
     allocations();
   }
 
-  return { all, dashboard, transactions, cards, debts, goals, allocations };
+  return { all, dashboard, balances, transactions, cards, debts, goals, allocations };
 })();

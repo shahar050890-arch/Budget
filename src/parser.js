@@ -125,7 +125,7 @@ window.Parser = (function () {
     let t = ' ' + text + ' ';
     // הסרת סכומים ומטבע
     t = t.replace(/\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?/g, ' ');
-    t = t.replace(/[₪]/g, ' ');
+    t = t.replace(/[₪%]/g, ' ');
     const kill = STOP.concat(extra, CARD_BRANDS);
     kill.sort((a, b) => b.length - a.length).forEach(w => {
       if (!w) return;
@@ -136,6 +136,16 @@ window.Parser = (function () {
   }
 
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /** ניקוי שם של דבר שנשאלה עליו שאלה: בלי פיסוק ובלי אותיות יחס תלושות */
+  function tidyThing(s) {
+    return String(s || '')
+      .replace(/[?!.,;:"']/g, ' ')
+      .replace(/-/g, ' ')
+      .replace(/(^|\s)[בלהמושכ](\s|$)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   /* ---------------- תאריך ---------------- */
 
@@ -190,6 +200,42 @@ window.Parser = (function () {
     if (/^(עזרה|help|\?|מה אפשר|מה אתה יודע)/.test(t))
       return { intent: 'help' };
 
+    /* --- יתרות בפועל --- */
+    const balKind = /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(t) ? 'checking'
+      : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(t) ? 'stocks'
+        : /(בחיסכון|בחסכון|קרן חיסכון|פיקדון)/.test(t) ? 'savings' : null;
+
+    if (balKind && amount != null && /(יש לי|נמצא|יתרה|מונח|צבור|שמור|יושב|נשאר|בערך|כרגע|עדכן|תעדכן)/.test(t)
+      && !/(להפריש|מפריש|הפרשה|כל חודש|בחודש|אחוז|%)/.test(t)) {
+      return { intent: 'balance', kind: balKind, amount: maxNum };
+    }
+
+    /* --- שאלת הון / יתרות --- */
+    if (/(הון|שווי נטו|שווה לי|כמה יש לי בסך|סך הכל|סה"כ יש לי|כמה שווה|מאזן|נטו)/.test(t) && !nums.length)
+      return { intent: 'netWorth' };
+
+    if (/כמה יש לי/.test(t) && balKind && !nums.length)
+      return { intent: 'balanceQuery', kind: balKind };
+
+    /* --- "אני יכול להרשות לעצמי?" — שאלת כן/לא --- */
+    if (/(יכול|אפשר|כדאי|מומלץ|שווה|נכון|מספיק)/.test(t) && amount != null
+      && /(לקנות|להוציא|לבזבז|להרשות|לשלם|לקחת|להזמין|מספיק)/.test(t)) {
+      return {
+        intent: 'afford',
+        amount: maxNum,
+        what: tidyThing(cleanNote(text, ['יכול','אפשר','כדאי','מומלץ','שווה','נכון','מספיק','להרשות','לעצמי','לקנות','להוציא','לבזבז','לשלם','לקחת','להזמין','האם','לי','עכשיו','היום']))
+      };
+    }
+
+    /* --- חוב מול חיסכון --- */
+    if (/(חוב|הלוואה|מינוס)/.test(t) && /(לחסוך|חיסכון|להשקיע|מניות)/.test(t)
+      && /(עדיף|כדאי|או|קודם|מה נכון|מה עדיף)/.test(t))
+      return { intent: 'debtVsSave' };
+
+    /* --- ייעוץ כללי --- */
+    if (/(תייעץ|להתייעץ|עצה|עצות|ממליץ|המלצה|המלצות|מה לעשות|מה כדאי|איך לחסוך|איך אני יכול לחסוך|תעזור לי|מה דעתך|איך אני עומד|אני בסדר|מה המצב שלי|תבדוק אותי|איפה אני מפסיד|איפה אני מבזבז|מה לצמצם)/.test(t))
+      return { intent: 'advice' };
+
     if (/^(בטל|ביטול|undo|טעות|תבטל)/.test(t))
       return { intent: 'undo' };
 
@@ -231,16 +277,23 @@ window.Parser = (function () {
 
     /* --- חובות --- */
     if (/(חוב|חובות|הלוואה|הלוואות|מינוס|אוברדרפט)/.test(t) && amount != null) {
+      const interestVal = (text.match(/ריבית\s*(?:של\s*)?(\d+(?:\.\d+)?)/) || [])[1];
       const monthly = (function () {
         const m = text.match(/(?:החזר|מחזיר|תשלום חודשי|כל חודש|בחודש)\s*(?:של\s*)?(\d[\d,]*)/);
         if (m) return parseFloat(m[1].replace(/,/g, ''));
-        if (nums.length > 1) return Math.min(...nums.map(n => n.value));
-        return null;
+        // אחרת: המספר הקטן ביותר, בלי אחוז הריבית ובלי גובה החוב עצמו
+        const rest = nums.map(n => n.value)
+          .filter(v => v !== maxNum && (interestVal == null || v !== parseFloat(interestVal)));
+        return rest.length ? Math.min(...rest) : null;
+      })();
+      const interest = (function () {
+        const m = text.match(/ריבית\s*(?:של\s*)?(\d+(?:\.\d+)?)\s*(?:%|אחוז)?/);
+        return m ? parseFloat(m[1]) : null;
       })();
       const paying = /(שילמתי|החזרתי|הפחתתי)/.test(t);
-      let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי']);
+      let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי','ריבית','אחוז','אחוזים','על']);
       if (!name) name = /מינוס|אוברדרפט/.test(t) ? 'מינוס בבנק' : 'הלוואה';
-      return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly };
+      return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly, interest };
     }
 
     /* --- הפקדה ליעד קיים --- */
@@ -304,5 +357,5 @@ window.Parser = (function () {
     return { intent: 'unknown', text };
   }
 
-  return { parse, CATEGORIES, categoryIcon, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote };
+  return { parse, CATEGORIES, categoryIcon, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();

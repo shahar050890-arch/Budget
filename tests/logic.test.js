@@ -147,6 +147,105 @@ const before = Store.get().transactions.length;
 Engine.handle('בטל');
 check('ביטול החזיר מצב', Store.get().transactions.length === before - 1 || Store.totalDebt() === 20000, Store.totalDebt());
 
+console.log('\n== יתרות והון ==');
+r = p('יש לי בעובר ושב 8000');
+check('יתרת עו"ש', r.intent === 'balance' && r.kind === 'checking' && r.amount === 8000, JSON.stringify(r));
+
+r = p('יש לי בחיסכון 20000');
+check('יתרת חיסכון', r.intent === 'balance' && r.kind === 'savings', JSON.stringify(r));
+
+r = p('יש לי במניות 15000');
+check('יתרת מניות', r.intent === 'balance' && r.kind === 'stocks', JSON.stringify(r));
+
+r = p('להפריש 1000 לחיסכון');
+check('הפרשה לא מתבלבלת עם יתרה', r.intent === 'allocation', JSON.stringify(r));
+
+r = p('כמה יש לי בעובר ושב?');
+check('שאילתת יתרה', r.intent === 'balanceQuery' && r.kind === 'checking', JSON.stringify(r));
+
+r = p('כמה ההון שלי?');
+check('שאילתת הון', r.intent === 'netWorth', JSON.stringify(r));
+
+Engine.handle('יש לי בעובר ושב 8000');
+Engine.handle('יש לי בחיסכון 20000');
+Engine.handle('יש לי במניות 15000');
+check('היתרות נשמרו', Store.totalAssets() === 43000, Store.totalAssets());
+check('הון נקי מנכה חובות',
+  Store.netWorth() === 43000 - Store.totalDebt() - Store.pendingCardCharges(),
+  Store.netWorth());
+
+const cashBefore = Store.get().balances.checking;
+Engine.handle('קניתי לחם 20');
+check('הוצאה במזומן מורידה מהעו"ש',
+  Store.get().balances.checking === cashBefore - 20, Store.get().balances.checking);
+
+const cashBeforeCard = Store.get().balances.checking;
+Engine.handle('שילמתי 500 בויזה על בגדים');
+check('חיוב אשראי לא יורד מהעו"ש מיד',
+  Store.get().balances.checking === cashBeforeCard, Store.get().balances.checking);
+check('אבל נספר כחיוב צפוי', Store.pendingCardCharges() >= 500, Store.pendingCardCharges());
+
+const savBefore = Store.get().balances.savings;
+const chkBefore = Store.get().balances.checking;
+Engine.handle('הפקדתי 1000 לרכב');
+check('הפקדה ליעד מעבירה מעו"ש לחיסכון',
+  Store.get().balances.savings === savBefore + 1000 &&
+  Store.get().balances.checking === chkBefore - 1000,
+  Store.get().balances.checking + '/' + Store.get().balances.savings);
+
+Engine.handle('בטל');
+check('ביטול מחזיר גם את היתרות',
+  Store.get().balances.savings === savBefore && Store.get().balances.checking === chkBefore,
+  Store.get().balances.checking + '/' + Store.get().balances.savings);
+
+console.log('\n== שאלות וייעוץ ==');
+r = p('אני יכול לקנות טלוויזיה ב-3000?');
+check('שאלת כן/לא', r.intent === 'afford' && r.amount === 3000, JSON.stringify(r));
+
+r = p('כדאי לי לקנות אוזניות ב-800?');
+check('"כדאי לי" גם עובד', r.intent === 'afford' && r.amount === 800, JSON.stringify(r));
+
+r = p('מה אתה ממליץ?');
+check('בקשת ייעוץ', r.intent === 'advice', JSON.stringify(r));
+
+r = p('איפה אני מבזבז הכי הרבה?');
+check('שאלת בזבוז', r.intent === 'advice', JSON.stringify(r));
+
+r = p('עדיף להחזיר את החוב או לחסוך?');
+check('חוב מול חיסכון', r.intent === 'debtVsSave', JSON.stringify(r));
+
+r = p('יש לי הלוואה 30000 בריבית 8% החזר 900 בחודש');
+check('ריבית נקלטת', r.intent === 'debt' && r.interest === 8, JSON.stringify(r));
+check('הריבית לא מבלבלת את ההחזר', r.monthly === 900, JSON.stringify(r));
+check('שם החוב לא בולע את הריבית', r.name === 'הלוואה', JSON.stringify(r.name));
+
+// תשובה חיובית: קנייה קטנה שנכנסת בתקציב
+let ans = Engine.handle('אני יכול לקנות אוזניות ב-100?');
+check('קנייה קטנה → כן', /✅ כן/.test(ans), ans.slice(0, 90));
+
+// תשובה שלילית: קנייה מעל הכסף שיש בעו"ש
+ans = Engine.handle('אני יכול לקנות רכב ב-90000?');
+check('קנייה ענקית → לא', /❌/.test(ans), ans.slice(0, 90));
+
+ans = Engine.handle('מה אתה ממליץ?');
+check('הייעוץ מחזיר ציון', /\d+\/100/.test(ans), ans.slice(0, 90));
+check('הייעוץ נותן צעד קונקרטי', /הצעד הכי משתלם/.test(ans));
+
+ans = Engine.handle('עדיף להחזיר את החוב או לחסוך?');
+check('ייעוץ חוב מתייחס לריבית', /ריבית/.test(ans), ans.slice(0, 90));
+
+r = p('אני יכול לקנות טלוויזיה ב-3000?');
+check('שם הפריט נקי מפיסוק', r.what === 'טלוויזיה', JSON.stringify(r.what));
+
+// כרית ביטחון לא מנופחת כשיש חודש אחד דליל בלבד
+check('קצב שריפה מוערך כשאין היסטוריה',
+  Store.burnIsEstimated() && Store.monthlyBurn() >= Store.monthIncome() * 0.5,
+  Store.monthlyBurn() + ' (חודשים שנרשמו: ' + Store.monthsRecorded() + ')');
+
+const h = Store.health();
+check('ציון בריאות בטווח', h.score >= 0 && h.score <= 100, h.score);
+check('יש ממצאים', Array.isArray(h.issues) && h.issues.length > 0);
+
 console.log('\n== סיכום ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');
 process.exit(fail ? 1 : 0);

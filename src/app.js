@@ -79,10 +79,15 @@
     const list = [];
 
     if (!s.profile.salary) list.push('המשכורת שלי 12000');
+    if (!s.declared.checking) list.push('יש לי בעובר ושב 8000');
+    if (!s.declared.savings) list.push('יש לי בחיסכון 20000');
+    if (!s.declared.stocks) list.push('יש לי במניות 15000');
     if (!s.cards.length) list.push('כרטיס ויזה מסגרת 10000');
     if (!Object.keys(s.allocations).length) list.push('להפריש 1000 לחיסכון');
     if (!s.goals.length) list.push('לחסוך לרכב 15000 ב־4 חודשים');
-    if (!Object.keys(s.limits).length) list.push('הגבלה למסעדות 800');
+    if (s.profile.salary) list.push('מה אתה ממליץ?');
+    if (Store.hasBalances()) list.push('אני יכול לקנות טלוויזיה ב-3000?');
+    if (s.debts.length) list.push('עדיף להחזיר את החוב או לחסוך?');
     list.push('מה המצב?');
     if (s.transactions.length) list.push('כמה הוצאתי על מזון?');
     list.push('עזרה');
