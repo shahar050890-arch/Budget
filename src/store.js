@@ -6,13 +6,18 @@ window.Store = (function () {
   const EMPTY = {
     version: 1,
     profile: { salary: 0, salaryDay: 10 },
-    transactions: [],   // {id,type:'expense'|'income',amount,category,note,date,cardId,goalId}
+    balances: { checking: 0, savings: 0, stocks: 0 },  // יתרות בפועל
+    declared: {},       // אילו יתרות המשתמש הגדיר בפועל {checking:true,...}
+    transactions: [],   // {id,type:'expense'|'income',amount,category,note,date,cardId,goalId,toSavings,toStocks}
     cards: [],          // {id,name,limit,billingDay}
-    debts: [],          // {id,name,amount,monthly}
+    debts: [],          // {id,name,amount,monthly,interest}
     goals: [],          // {id,name,target,saved,deadline,months,createdAt,done}
     limits: {},         // {category: amount}
+    customCategories: [], // קטגוריות שהמשתמש המציא: [{name, icon}]
     allocations: {},    // {savings|stocks: {kind:'fixed'|'percent', value}}
     chat: [],           // {role:'me'|'bot', html, ts}
+    setup: { step: 0, done: false },  // אשף ההקמה בשימוש ראשון
+    lastMonthSeen: null,              // לזיהוי מעבר חודש
     history: []         // ל־undo: [{label, snapshot}]
   };
 
@@ -229,11 +234,197 @@ window.Store = (function () {
     return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
   }
 
+  /** כמה חודשים מלאים של הוצאות נרשמו (החודש הנוכחי לא נחשב מלא) */
+  function monthsRecorded() {
+    const set = new Set(state.transactions.filter(t => t.type === 'expense').map(t => U.monthKey(t.date)));
+    set.delete(U.currentMonth());
+    return set.size;
+  }
+
+  /**
+   * קצב השריפה החודשי — הבסיס לחישוב כרית הביטחון.
+   * חודש-חודשיים של נתונים חלקיים נותנים ממוצע נמוך בטעות ומנפחים את
+   * כרית הביטחון, ולכן עד שנצבר היסטוריה אמיתית משתמשים באומדן שמרני
+   * מתוך ההכנסה.
+   */
+  function monthlyBurn() {
+    const avg = avgMonthlyExpense();
+    if (monthsRecorded() >= 2) return avg;
+    const income = monthIncome();
+    const estimate = income ? Math.round(income * 0.7) : 0;
+    return Math.max(avg, estimate);
+  }
+
+  function burnIsEstimated() {
+    return monthsRecorded() < 2;
+  }
+
+  /** שיעור החיסכון: כמה מההכנסה הולך לחיסכון, מניות ויעדים */
+  function savingsRate() {
+    const income = monthIncome();
+    if (!income) return 0;
+    return U.pct(totalAllocations() + goalsMonthly(), income);
+  }
+
+  /**
+   * אבחון מצב פיננסי — הבסיס לייעוץ בצ'אט.
+   * מחזיר רשימת ממצאים ממוינים לפי חומרה, וציון 0–100.
+   */
+  function health() {
+    const plan = monthlyPlan();
+    const income = plan.income;
+    const issues = [];   // {level:'bad'|'warn'|'good', text, fix}
+    let score = 100;
+
+    if (!income) {
+      return { score: null, issues: [{ level: 'warn', text: 'עוד לא הגדרת משכורת, אז אין לי בסיס להשוואה.', fix: 'כתוב «המשכורת שלי 12000».' }], plan };
+    }
+
+    // 1. תזרים חודשי
+    if (plan.free < 0) {
+      score -= 35;
+      issues.push({ level: 'bad', text: 'אתה בגירעון חודשי של ' + U.money(-plan.free) + '.', fix: 'צריך לקצץ בהוצאות או להקטין הפרשות.' });
+    } else if (income && plan.free < income * 0.05) {
+      score -= 15;
+      issues.push({ level: 'warn', text: 'העודף החודשי דק מאוד — ' + U.money(plan.free) + ' בלבד.', fix: 'כל הוצאה לא צפויה תוציא אותך מאיזון.' });
+    }
+
+    // 2. עומס חובות
+    const dm = debtMonthly();
+    if (dm > income * 0.35) {
+      score -= 25;
+      issues.push({ level: 'bad', text: 'החזרי החובות הם ' + U.pct(dm, income) + '% מההכנסה — מעל הסף הבריא של 35%.', fix: 'עדיף למחזר או לאחד הלוואות.' });
+    } else if (dm > income * 0.2) {
+      score -= 10;
+      issues.push({ level: 'warn', text: 'החזרי החובות הם ' + U.pct(dm, income) + '% מההכנסה.', fix: 'שווה לסגור קודם את החוב היקר ביותר.' });
+    }
+
+    // 3. שיעור חיסכון
+    const sr = savingsRate();
+    if (sr === 0) {
+      score -= 20;
+      issues.push({ level: 'warn', text: 'אתה לא מפריש כלום לחיסכון.', fix: 'התחל אפילו מ-5% — «להפריש ' + U.num(Math.round(income * 0.05 / 50) * 50) + ' לחיסכון».' });
+    } else if (sr < 10) {
+      score -= 8;
+      issues.push({ level: 'warn', text: 'שיעור החיסכון שלך הוא ' + sr + '% — מתחת ל-10% המקובלים.', fix: 'נסה להעלות בהדרגה.' });
+    } else {
+      issues.push({ level: 'good', text: 'שיעור חיסכון של ' + sr + '% — יפה מאוד.', fix: '' });
+    }
+
+    // 4. כרית ביטחון
+    if (hasBalances()) {
+      const avg = monthlyBurn();
+      const cushion = state.balances.checking + state.balances.savings;
+      const months = avg ? (cushion / avg) : 0;
+      if (months < 1) {
+        score -= 20;
+        issues.push({ level: 'bad', text: 'כרית הביטחון שלך מכסה פחות מחודש הוצאות.', fix: 'היעד הראשון צריך להיות 3 חודשי הוצאות — ' + U.money(avg * 3) + '.' });
+      } else if (months < 3) {
+        score -= 10;
+        issues.push({ level: 'warn', text: 'כרית הביטחון מכסה ' + months.toFixed(1) + ' חודשי הוצאות.', fix: 'כדאי להגיע ל-3 חודשים לפחות (' + U.money(avg * 3) + ').' });
+      } else {
+        issues.push({ level: 'good', text: 'כרית ביטחון של ' + months.toFixed(1) + ' חודשי הוצאות — מצוין.', fix: '' });
+      }
+    }
+
+    // 5. ניצול אשראי
+    const limit = totalCardLimit();
+    if (limit) {
+      const util = U.pct(totalCardUsed(), limit);
+      if (util > 75) {
+        score -= 12;
+        issues.push({ level: 'bad', text: 'ניצול מסגרות האשראי עומד על ' + util + '%.', fix: 'ניצול גבוה פוגע בדירוג האשראי.' });
+      }
+    }
+
+    // 6. חריגות מהגבלות
+    Object.keys(state.limits).forEach(cat => {
+      const spent = categorySpent(cat);
+      if (spent > state.limits[cat]) {
+        score -= 5;
+        issues.push({ level: 'warn', text: 'חריגה ב' + cat + ': ' + U.money(spent) + ' מתוך ' + U.money(state.limits[cat]) + '.', fix: 'זה ' + U.money(spent - state.limits[cat]) + ' מעל התקציב.' });
+      }
+    });
+
+    const order = { bad: 0, warn: 1, good: 2 };
+    issues.sort((a, b) => order[a.level] - order[b.level]);
+    return { score: U.clamp(Math.round(score), 0, 100), issues, plan };
+  }
+
+  /**
+   * סיכום חודש: כמה נכנס, כמה יצא, ומה השתנה מול החודש שלפניו.
+   * זה מה שמאפשר לומר "כאן אתה מוציא הכי הרבה, וכאן אפשר לוותר".
+   */
+  function monthReview(mKey = U.prevMonth()) {
+    const prev = U.prevMonth(mKey);
+    const income = monthIncome(mKey);
+    const spent = monthExpense(mKey);
+    const cats = byCategory(mKey);
+    const prevCats = Object.fromEntries(byCategory(prev));
+
+    const rows = cats.map(([name, amount]) => {
+      const before = prevCats[name] || 0;
+      return {
+        name, amount, before,
+        delta: amount - before,
+        share: U.pct(amount, spent || 1),
+        flex: Parser.isFlexible(name)
+      };
+    });
+
+    const flex = rows.filter(r => r.flex);
+    const flexTotal = flex.reduce((s, r) => s + r.amount, 0);
+    const grew = rows.filter(r => r.before > 0 && r.delta > 0).sort((a, b) => b.delta - a.delta);
+
+    return {
+      month: mKey, prev, income, spent, rows,
+      saved: income - spent,
+      flex, flexTotal,
+      flexShare: U.pct(flexTotal, spent || 1),
+      grew,
+      hasPrev: Object.keys(prevCats).length > 0,
+      // כמה אפשר לחסוך בקיצוץ שליש מההוצאות הגמישות
+      cutPotential: Math.round(flexTotal / 3 / 10) * 10
+    };
+  }
+
+  /** האם עברנו לחודש חדש מאז הפעם הקודמת שנפתחה האפליקציה */
+  function isNewMonth() {
+    return state.lastMonthSeen !== null && state.lastMonthSeen !== U.currentMonth();
+  }
+
+  function markMonthSeen() {
+    state.lastMonthSeen = U.currentMonth();
+    save();
+  }
+
   /* ================= מוטציות ================= */
+
+  /**
+   * החלת תנועה על היתרות בפועל. dir=1 להחלה, dir=-1 לביטול.
+   * חיוב אשראי לא יורד מהעו"ש עכשיו — הוא יירד ביום החיוב, ולכן נספר
+   * בנפרד כ"חיוב צפוי" (ראו pendingCardCharges).
+   */
+  function applyBalance(t, dir) {
+    const b = state.balances;
+    if (t.type === 'transfer') {
+      b[t.from] -= dir * t.amount;
+      b[t.to] += dir * t.amount;
+      return;
+    }
+    // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
+    if (t.type === 'deposit') { b[t.to] += dir * t.amount; return; }
+    if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
+    if (t.cardId) return;
+    b[t.source || 'checking'] -= dir * t.amount;
+    if (t.goalId || t.toSavings) b.savings += dir * t.amount;
+    if (t.toStocks) b.stocks += dir * t.amount;
+  }
 
   function addTx(tx) {
     const t = Object.assign({ id: U.uid(), date: U.todayISO(), category: 'כללי', cardId: null }, tx);
     state.transactions.unshift(t);
+    applyBalance(t, 1);
     save();
     return t;
   }
@@ -242,8 +433,66 @@ window.Store = (function () {
     const i = state.transactions.findIndex(t => t.id === id);
     if (i < 0) return null;
     const [t] = state.transactions.splice(i, 1);
+    applyBalance(t, -1);
     save();
     return t;
+  }
+
+  /** העברה בין חשבונות — לא הוצאה, רק הזזת כסף */
+  function addTransfer(from, to, amount, note) {
+    const t = {
+      id: U.uid(), type: 'transfer', from, to, amount,
+      note: note || 'העברה', date: U.todayISO(), category: 'העברה'
+    };
+    state.transactions.unshift(t);
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
+  /** הפקדה לחשבון — מגדילה יתרה, אינה הכנסה חודשית ואינה הוצאה */
+  function addDeposit(to, amount, note) {
+    const t = {
+      id: U.uid(), type: 'deposit', to, amount,
+      note: note || 'הפקדה', date: U.todayISO(), category: 'הפקדה'
+    };
+    state.transactions.unshift(t);
+    state.declared[to] = true;
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
+  /* ---------- יתרות והון ---------- */
+
+  function setBalance(kind, amount) {
+    state.balances[kind] = amount;
+    state.declared[kind] = true;
+    save();
+  }
+
+  function hasBalances() {
+    return Object.keys(state.declared).length > 0;
+  }
+
+  /** חיובי אשראי שנרשמו וטרם ירדו מהעו"ש */
+  function pendingCardCharges() {
+    return state.cards.reduce((s, c) => s + cardUsed(c.id), 0);
+  }
+
+  function totalAssets() {
+    const b = state.balances;
+    return b.checking + b.savings + b.stocks;
+  }
+
+  /** הון נקי = נכסים − חובות − חיובי אשראי שטרם ירדו */
+  function netWorth() {
+    return totalAssets() - totalDebt() - pendingCardCharges();
+  }
+
+  /** כמה זמין באמת להוצאה עכשיו: עו"ש פחות מה שכבר מיועד */
+  function liquidNow() {
+    return state.balances.checking - pendingCardCharges();
   }
 
   function findCard(name) {
@@ -321,6 +570,20 @@ window.Store = (function () {
     save();
   }
 
+  /**
+   * קטגוריה שהמשתמש המציא — נשמרת ומזוהה מכאן ואילך.
+   * ברירת המחדל היא "גמישה": כשמישהו פותח קטגוריה במיוחד כדי לעקוב אחריה,
+   * זו כמעט תמיד הוצאה שהוא שוקל לצמצם ולא הוצאה חיונית.
+   */
+  function addCustomCategory(name, icon, flex) {
+    const exists = state.customCategories.some(c => c.name === name);
+    if (!exists) state.customCategories.push({
+      name, icon: icon || '🏷️', flex: flex !== false
+    });
+    save();
+    return name;
+  }
+
   function setLimit(cat, amount) {
     if (amount === 0) delete state.limits[cat];
     else state.limits[cat] = amount;
@@ -345,11 +608,13 @@ window.Store = (function () {
     cardUsed, totalCardLimit, totalCardUsed, totalDebt, debtMonthly, debtPaid, debtRemainingThisMonth,
     allocAmount, totalAllocations, goalsMonthly, activeGoals, goalMonthlyNeed,
     goalDeposited, goalRemainingThisMonth, goalStatus,
-    monthlyPlan, avgMonthlyExpense,
+    monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
     addTx, removeTx,
+    setBalance, hasBalances, pendingCardCharges, totalAssets, netWorth, liquidNow,
+    savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
     findCard, upsertCard, removeCard,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,
-    setLimit, setAllocation, pushChat
+    setLimit, setAllocation, pushChat, addCustomCategory
   };
 })();

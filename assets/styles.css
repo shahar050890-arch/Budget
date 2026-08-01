@@ -169,6 +169,65 @@ button{font-family:inherit}
 .pill.warn{background:rgba(255,184,77,.14); color:var(--warn)}
 .pill.bad{background:rgba(255,107,107,.14); color:var(--bad)}
 
+/* ---------- גרף קטגוריות ----------
+   סדרה אחת (הוצאה לקטגוריה) בגוון אחד; חריגה מהגבלה מסומנת בקו סף
+   ובתווית עם אייקון — לא בצבע בלבד. */
+.viz{
+  --viz-bar:#2a78d6;
+  --viz-track:#e8edf6;
+  --viz-limit:#d03b3b;
+  --viz-grid:#e2e8f4;
+  width:100%;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])) .viz{
+    --viz-bar:#3987e5; --viz-track:#1b2436; --viz-limit:#d03b3b; --viz-grid:#25314a;
+  }
+}
+:root[data-theme="dark"] .viz{
+  --viz-bar:#3987e5; --viz-track:#1b2436; --viz-limit:#d03b3b; --viz-grid:#25314a;
+}
+
+.viz-row{display:grid; grid-template-columns:1fr auto; gap:4px 10px; align-items:baseline; margin-bottom:12px}
+.viz-row:last-child{margin-bottom:0}
+.viz-name{font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:6px; min-width:0}
+.viz-name span{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.viz-val{font-size:13px; font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap}
+.viz-track{
+  grid-column:1 / -1; position:relative; height:14px; border-radius:3px;
+  background:var(--viz-track); overflow:visible;
+}
+.viz-bar{
+  height:100%; background:var(--viz-bar);
+  border-radius:0 4px 4px 0;   /* קצה מעוגל בצד הנתון, ישר בבסיס (RTL) */
+  transition:width .45s cubic-bezier(.2,.7,.3,1);
+}
+/* קו הסף של ההגבלה */
+.viz-limit{
+  position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--viz-limit);
+}
+.viz-limit::after{
+  content:''; position:absolute; inset-block-start:-2px; inset-inline-start:-2px;
+  width:6px; height:6px; border-radius:50%; background:var(--viz-limit);
+}
+.viz-flag{
+  display:inline-flex; align-items:center; gap:3px; font-size:11.5px; font-weight:600;
+  color:var(--viz-limit); white-space:nowrap;
+}
+.viz-foot{
+  display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--viz-grid);
+  font-size:12.5px; color:var(--muted);
+}
+.viz-split{display:flex; height:14px; border-radius:3px; overflow:hidden; margin:8px 0 6px; gap:2px}
+.viz-split i{display:block; height:100%}
+.viz-split i.ess{background:var(--viz-bar); border-radius:3px 0 0 3px}
+.viz-split i.flx{background:var(--viz-bar); opacity:.42; border-radius:0 3px 3px 0}
+.viz-key{display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--muted)}
+.viz-key b{color:var(--text); font-variant-numeric:tabular-nums}
+.viz-key i{display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--viz-bar); margin-inline-end:5px}
+.viz-key i.soft{opacity:.42}
+
 /* ---------- toast ---------- */
 .toast{
   position:fixed; bottom:22px; left:50%; transform:translate(-50%,20px);

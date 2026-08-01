@@ -5,18 +5,18 @@ window.Parser = (function () {
 
   const CATEGORIES = [
     { name: 'מזון',      icon: '🛒', words: ['סופר','סופרמרקט','מכולת','שופרסל','רמי לוי','ויקטורי','יינות ביתן','אושר עד','טיב טעם','קניות','אוכל','מזון','ירקות','פירות','בשר','לחם','חלב'] },
-    { name: 'מסעדות',    icon: '🍔', words: ['מסעדה','מסעדות','קפה','קפהשק','בית קפה','ארוחה','פיצה','המבורגר','בורגר','שווארמה','פלאפל','סושי','משלוח','וולט','תן ביס','wolt','מאפה','קרואסון','גלידה','בר','פאב','בירה'] },
+    { flex: true, name: 'מסעדות',    icon: '🍔', words: ['מסעדה','מסעדות','קפה','קפהשק','בית קפה','ארוחה','פיצה','המבורגר','בורגר','שווארמה','פלאפל','סושי','משלוח','וולט','תן ביס','wolt','מאפה','קרואסון','גלידה','בר','פאב','בירה'] },
     { name: 'תחבורה',    icon: '🚗', words: ['דלק','תדלוק','סולר','בנזין','אוטובוס','רכבת','מונית','גט','אובר','חניה','חנייה','כביש 6','נסיעה','רב קו','רב־קו','טסט','ביטוח רכב','מוסך','צמיגים','טיפול לרכב','אופנוע','קורקינט'] },
     { name: 'דיור',      icon: '🏠', words: ['שכר דירה','שכירות','משכנתא','ארנונה','ועד בית','חשמל','מים','גז','תיקון','אינסטלטור','חשמלאי','ריהוט','איקאה','כלי בית'] },
     { name: 'תקשורת',    icon: '📱', words: ['סלולר','סלולרי','פלאפון','טלפון','אינטרנט','סלקום','פרטנר','הוט','yes','יס','בזק','גולן','רמי לוי תקשורת','חבילת גלישה'] },
-    { name: 'בילויים',   icon: '🎬', words: ['סרט','קולנוע','הצגה','תיאטרון','הופעה','כרטיסים','נטפליקס','netflix','ספוטיפיי','spotify','דיסני','משחק','פלייסטיישן','גיימינג','מנוי','בילוי','טיול','חופשה','מלון','צימר','טיסה'] },
+    { flex: true, name: 'בילויים',   icon: '🎬', words: ['סרט','קולנוע','הצגה','תיאטרון','הופעה','כרטיסים','נטפליקס','netflix','ספוטיפיי','spotify','דיסני','משחק','פלייסטיישן','גיימינג','מנוי','בילוי','טיול','חופשה','מלון','צימר','טיסה'] },
     { name: 'בריאות',    icon: '💊', words: ['רופא','רופאה','מרפאה','קופת חולים','כללית','מכבי','מאוחדת','לאומית','תרופות','בית מרקחת','סופר פארם','בדיקה','שיניים','שיננית','משקפיים','אופטיקה','ביטוח בריאות','פסיכולוג','פיזיותרפיה'] },
-    { name: 'ביגוד',     icon: '👕', words: ['בגדים','ביגוד','חולצה','מכנסיים','נעליים','סניקרס','זארה','קסטרו','fox','אופנה','תיק','מעיל','גרביים'] },
+    { flex: true, name: 'ביגוד',     icon: '👕', words: ['בגדים','ביגוד','חולצה','מכנסיים','נעליים','סניקרס','זארה','קסטרו','fox','אופנה','תיק','מעיל','גרביים'] },
     { name: 'ילדים',     icon: '🧸', words: ['גן','גנון','צהרון','מעון','בייביסיטר','חוג','חוגים','בית ספר','ילד','ילדים','תינוק','חיתולים','טיטולים','צעצוע','צעצועים'] },
     { name: 'חינוך',     icon: '📚', words: ['לימודים','שכר לימוד','אוניברסיטה','מכללה','קורס','ספרים','ספר','השתלמות','שיעור פרטי'] },
-    { name: 'טיפוח',     icon: '💇', words: ['תספורת','מספרה','ספר','קוסמטיקה','איפור','ציפורניים','מניקור','פדיקור','ספא','עיסוי','חדר כושר','כושר','מכון כושר','חיטוב'] },
+    { flex: true, name: 'טיפוח',     icon: '💇', words: ['תספורת','מספרה','ספר','קוסמטיקה','איפור','ציפורניים','מניקור','פדיקור','ספא','עיסוי','חדר כושר','כושר','מכון כושר','חיטוב'] },
     { name: 'ביטוח',     icon: '🛡️', words: ['ביטוח','פוליסה','ביטוח לאומי','ביטוח דירה','ביטוח חיים'] },
-    { name: 'מתנות',     icon: '🎁', words: ['מתנה','מתנות','תרומה','צדקה','חתונה','בר מצווה','יום הולדת'] },
+    { flex: true, name: 'מתנות',     icon: '🎁', words: ['מתנה','מתנות','תרומה','צדקה','חתונה','בר מצווה','יום הולדת'] },
     { name: 'חיות',      icon: '🐶', words: ['כלב','חתול','וטרינר','אוכל לכלב','חיית מחמד','פטשופ'] },
     { name: 'עמלות',     icon: '🏦', words: ['עמלה','עמלות','ריבית','בנק','משיכה','דמי ניהול'] },
     { name: 'חובות',     icon: '📉', words: [] },
@@ -24,14 +24,49 @@ window.Parser = (function () {
     { name: 'כללי',      icon: '💳', words: [] }
   ];
 
+  /** הקטגוריות שהמשתמש הוסיף בעצמו, אם יש */
+  function customCats() {
+    try { return (window.Store && Store.get().customCategories) || []; }
+    catch (e) { return []; }
+  }
+
+  /** אייקון סביר לקטגוריה חדשה, לפי מילת המפתח */
+  const ICON_GUESS = {
+    'סיגריות':'🚬','עישון':'🚬','טבק':'🚬','אלכוהול':'🍷','יין':'🍷','בירה':'🍺',
+    'קפה':'☕','ממתקים':'🍫','חטיפים':'🍿','משחקים':'🎮','ספורט':'⚽','אופניים':'🚲',
+    'צמחים':'🪴','גינון':'🪴','ספרים':'📚','מוזיקה':'🎵','צילום':'📷','נסיעות':'✈️',
+    'לוטו':'🎰','הימורים':'🎰','תרופות':'💊','קעקועים':'🖋️','תחביב':'🎨'
+  };
+
+  function guessIcon(name) {
+    if (ICON_GUESS[name]) return ICON_GUESS[name];
+    for (const k of Object.keys(ICON_GUESS)) if (name.includes(k)) return ICON_GUESS[k];
+    return '🏷️';
+  }
+
+  /** קטגוריה שאפשר לצמצם בה בלי לפגוע בחיים החיוניים */
+  function isFlexible(name) {
+    const c = CATEGORIES.find(x => x.name === name);
+    if (c) return !!c.flex;
+    const cc = customCats().find(x => x.name === name);
+    return !!(cc && cc.flex);
+  }
+
   function categoryIcon(name) {
     const c = CATEGORIES.find(x => x.name === name);
-    return c ? c.icon : '💳';
+    if (c) return c.icon;
+    const cc = customCats().find(x => x.name === name);
+    return cc ? cc.icon : '🏷️';
   }
 
   function detectCategory(text) {
     const t = ' ' + text + ' ';
     let best = null, bestLen = 0;
+    // קטגוריות שהמשתמש הגדיר מקבלות עדיפות — הוא בחר אותן במפורש
+    for (const c of customCats()) {
+      if (t.includes(c.name) && c.name.length > bestLen) { best = c.name; bestLen = c.name.length; }
+    }
+    if (best) return best;
     for (const c of CATEGORIES) {
       for (const w of c.words) {
         if (t.includes(w) && w.length > bestLen) { best = c.name; bestLen = w.length; }
@@ -42,10 +77,64 @@ window.Parser = (function () {
 
   /** מזהה קטגוריה שהוזכרה במפורש (לצורך הגבלות ושאילתות) */
   function explicitCategory(text) {
-    for (const c of CATEGORIES) {
-      if (text.includes(c.name)) return c.name;
-    }
+    for (const c of customCats()) if (text.includes(c.name)) return c.name;
+    for (const c of CATEGORIES) if (text.includes(c.name)) return c.name;
     return detectCategory(text);
+  }
+
+  const SUBJECT_STOP = ['חודש','חודשי','חודשית','שקל','שקלים','ש"ח','שח','עצמי','לי','זה','הכל','חודשיים'];
+
+  /**
+   * הנושא של ההגבלה — גם כשהוא לא קטגוריה מוכרת.
+   * "להגביל 1000 שקל לסיגריות" → "סיגריות"
+   */
+  function extractLimitSubject(text) {
+    const known = CATEGORIES.find(c => text.includes(c.name));
+    if (known) return known.name;
+    const custom = customCats().find(c => text.includes(c.name));
+    if (custom) return custom.name;
+
+    // המילה שאחרי "ל"/"על"/"עבור" — לוקחים את האחרונה, היא בדרך כלל הנושא
+    const matches = [...text.matchAll(/(?:\s|^)(?:ל|על|עבור)\s*([֐-׿]{3,})/g)]
+      .map(m => m[1])
+      .filter(w => !SUBJECT_STOP.includes(w) && !SUBJECT_STOP.includes(w.replace(/^ה/, '')));
+    if (!matches.length) return null;
+    return matches[matches.length - 1].replace(/^ה/, '');
+  }
+
+  /* ---------------- חשבונות ---------------- */
+
+  const ACCOUNTS = {
+    checking: { icon: '🏛️', label: 'עובר ושב', words: ['עובר ושב','עו"ש','עוש','חשבון הבנק','חשבון בנק','הבנק','החשבון','העו"ש','מזומן'] },
+    savings:  { icon: '🐖', label: 'חיסכון',    words: ['חיסכון','חסכון','קרן החיסכון','קרן חיסכון','הפיקדון','פיקדון','החסכונות'] },
+    stocks:   { icon: '📈', label: 'תיק המניות', words: ['מניות','תיק המניות','תיק מניות','ההשקעות','השקעות','הבורסה','בורסה','התיק'] }
+  };
+
+  /**
+   * מאיזה חשבון יצא הכסף. מחפש רק צורות שמסמנות מקור ("מהחיסכון"),
+   * כדי ש"קניתי מניות" לא ייחשב כמשיכה מתיק המניות.
+   */
+  function detectAccount(text, prefixes = ['מה', 'מ', 'דרך ה', 'מתוך ה', 'מתוך ']) {
+    for (const key of Object.keys(ACCOUNTS)) {
+      for (const w of ACCOUNTS[key].words) {
+        for (const pre of prefixes) {
+          const re = new RegExp('(?:^|\\s)' + escapeRe(pre + w.replace(/^ה/, '')) + '(?:\\s|$|[,.?!])');
+          if (re.test(text)) return key;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** יעד ההעברה: "לחיסכון", "לעו״ש", "למניות" */
+  function detectTarget(text) {
+    for (const key of Object.keys(ACCOUNTS)) {
+      for (const w of ACCOUNTS[key].words) {
+        const re = new RegExp('(?:^|\\s)ל' + escapeRe(w.replace(/^ה/, '')) + '(?:\\s|$|[,.?!])');
+        if (re.test(text)) return key;
+      }
+    }
+    return null;
   }
 
   /* ---------------- כרטיסי אשראי ---------------- */
@@ -125,7 +214,7 @@ window.Parser = (function () {
     let t = ' ' + text + ' ';
     // הסרת סכומים ומטבע
     t = t.replace(/\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?/g, ' ');
-    t = t.replace(/[₪]/g, ' ');
+    t = t.replace(/[₪%]/g, ' ');
     const kill = STOP.concat(extra, CARD_BRANDS);
     kill.sort((a, b) => b.length - a.length).forEach(w => {
       if (!w) return;
@@ -136,6 +225,16 @@ window.Parser = (function () {
   }
 
   function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /** ניקוי שם של דבר שנשאלה עליו שאלה: בלי פיסוק ובלי אותיות יחס תלושות */
+  function tidyThing(s) {
+    return String(s || '')
+      .replace(/[?!.,;:"']/g, ' ')
+      .replace(/-/g, ' ')
+      .replace(/(^|\s)[בלהמושכ](\s|$)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   /* ---------------- תאריך ---------------- */
 
@@ -183,12 +282,60 @@ window.Parser = (function () {
     const text = normalize(raw);
     const t = text.toLowerCase();
     const nums = findNumbers(text);
+    // מאיזה חשבון יצא הכסף ולאן — נחוץ כבר עכשיו כדי ש"מהחיסכון"
+    // לא ייקרא בטעות כהפרשה *אל* החיסכון
+    const srcAccount = detectAccount(text);
+    const dstAccount = detectTarget(text);
     const amount = nums.length ? nums[0].value : null;
     const maxNum = nums.length ? Math.max(...nums.map(n => n.value)) : null;
 
     /* --- פקודות מערכת --- */
     if (/^(עזרה|help|\?|מה אפשר|מה אתה יודע)/.test(t))
       return { intent: 'help' };
+
+    /* --- יתרות בפועל --- */
+    const balKind = /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(t) ? 'checking'
+      : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(t) ? 'stocks'
+        : /(בחיסכון|בחסכון|קרן חיסכון|פיקדון)/.test(t) ? 'savings' : null;
+
+    if (balKind && amount != null && /(יש לי|נמצא|יתרה|מונח|צבור|שמור|יושב|נשאר|בערך|כרגע|עדכן|תעדכן)/.test(t)
+      && !/(להפריש|מפריש|הפרשה|כל חודש|בחודש|אחוז|%)/.test(t)) {
+      return { intent: 'balance', kind: balKind, amount: maxNum };
+    }
+
+    /* --- שאלת הון / יתרות --- */
+    if (/(הון|שווי נטו|שווה לי|כמה יש לי בסך|סך הכל|סה"כ יש לי|כמה שווה|מאזן|נטו)/.test(t) && !nums.length)
+      return { intent: 'netWorth' };
+
+    if (/כמה יש לי/.test(t) && balKind && !nums.length)
+      return { intent: 'balanceQuery', kind: balKind };
+
+    /* --- "אני יכול להרשות לעצמי?" — שאלת כן/לא --- */
+    if (/(יכול|אפשר|כדאי|מומלץ|שווה|נכון|מספיק)/.test(t) && amount != null
+      && /(לקנות|להוציא|לבזבז|להרשות|לשלם|לקחת|להזמין|מספיק)/.test(t)) {
+      return {
+        intent: 'afford',
+        amount: maxNum,
+        what: tidyThing(cleanNote(text, ['יכול','אפשר','כדאי','מומלץ','שווה','נכון','מספיק','להרשות','לעצמי','לקנות','להוציא','לבזבז','לשלם','לקחת','להזמין','האם','לי','עכשיו','היום']))
+      };
+    }
+
+    /* --- חוב מול חיסכון --- */
+    if (/(חוב|הלוואה|מינוס)/.test(t) && /(לחסוך|חיסכון|להשקיע|מניות)/.test(t)
+      && /(עדיף|כדאי|או|קודם|מה נכון|מה עדיף)/.test(t))
+      return { intent: 'debtVsSave' };
+
+    /* --- "אותו דבר" בפתיחת חודש --- */
+    if (/^(אותו דבר|כמו קודם|כמו תמיד|בלי שינוי|אין שינוי|הכל אותו דבר|כרגיל|לא השתנה)/.test(t))
+      return { intent: 'sameAsBefore' };
+
+    /* --- סיכום החודש שעבר --- */
+    if (/(סיכום החודש|סיכום חודשי|חודש שעבר|החודש שעבר|דוח חודשי|מה היה בחודש|איך היה החודש|סיכום של החודש)/.test(t))
+      return { intent: 'monthReview' };
+
+    /* --- ייעוץ כללי --- */
+    if (/(תייעץ|להתייעץ|עצה|עצות|ממליץ|המלצה|המלצות|מה לעשות|מה כדאי|איך לחסוך|איך אני יכול לחסוך|תעזור לי|מה דעתך|איך אני עומד|אני בסדר|מה המצב שלי|תבדוק אותי|איפה אני מפסיד|איפה אני מבזבז|מה לצמצם)/.test(t))
+      return { intent: 'advice' };
 
     if (/^(בטל|ביטול|undo|טעות|תבטל)/.test(t))
       return { intent: 'undo' };
@@ -211,8 +358,13 @@ window.Parser = (function () {
       return { intent: 'unknown', text };
     }
 
-    /* --- משכורת --- */
-    if (/(משכורת|שכר|מרוויח|מרויח|הכנסה חודשית|משתכר)/.test(t) && amount != null && !/בונוס/.test(t)) {
+    /* --- משכורת ---
+       "שכר דירה" ו"שכר לימוד" הן הוצאות ולא הכנסה, וגם משפט עם פועל של
+       תשלום ("שילמתי שכר דירה") לעולם אינו הגדרת משכורת. */
+    const salaryWord = /(משכורת|שכר|מרוויח|מרויח|הכנסה חודשית|משתכר)/.test(t)
+      && !/(שכר דירה|שכר לימוד|שכר טרחה|שכירות)/.test(t)
+      && !/(שילמתי|משלם|קניתי|הוצאתי|תשלום)/.test(t);
+    if (salaryWord && amount != null && !/בונוס/.test(t)) {
       const day = (text.match(/(?:ב|ל)?(\d{1,2})\s*(?:לחודש|בחודש)/) || [])[1];
       return { intent: 'salary', amount: maxNum, salaryDay: day ? parseInt(day, 10) : null };
     }
@@ -231,16 +383,35 @@ window.Parser = (function () {
 
     /* --- חובות --- */
     if (/(חוב|חובות|הלוואה|הלוואות|מינוס|אוברדרפט)/.test(t) && amount != null) {
+      const interestVal = (text.match(/ריבית\s*(?:של\s*)?(\d+(?:\.\d+)?)/) || [])[1];
       const monthly = (function () {
         const m = text.match(/(?:החזר|מחזיר|תשלום חודשי|כל חודש|בחודש)\s*(?:של\s*)?(\d[\d,]*)/);
         if (m) return parseFloat(m[1].replace(/,/g, ''));
-        if (nums.length > 1) return Math.min(...nums.map(n => n.value));
-        return null;
+        // אחרת: המספר הקטן ביותר, בלי אחוז הריבית ובלי גובה החוב עצמו
+        const rest = nums.map(n => n.value)
+          .filter(v => v !== maxNum && (interestVal == null || v !== parseFloat(interestVal)));
+        return rest.length ? Math.min(...rest) : null;
+      })();
+      const interest = (function () {
+        const m = text.match(/ריבית\s*(?:של\s*)?(\d+(?:\.\d+)?)\s*(?:%|אחוז)?/);
+        return m ? parseFloat(m[1]) : null;
       })();
       const paying = /(שילמתי|החזרתי|הפחתתי)/.test(t);
-      let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי']);
+      let name = cleanNote(text, ['חוב','חובות','הלוואה','הלוואות','יש','לי','החזר','מחזיר','תשלום','חודשי','כל','חודש','בחודש','מינוס','אוברדרפט','שילמתי','החזרתי','ריבית','אחוז','אחוזים','על']);
       if (!name) name = /מינוס|אוברדרפט/.test(t) ? 'מינוס בבנק' : 'הלוואה';
-      return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly };
+      return { intent: paying ? 'debtPayment' : 'debt', name, amount: maxNum, monthly, interest };
+    }
+
+    /* --- הפקדה לחשבון: "הפקדתי במזומן לחשבון 1000" --- */
+    if (/(הפקדתי|הפקדה|הכנסתי|הפקדנו|שמתי|הוספתי|נכנס|קיבלתי|משכורת נכנסה)/.test(t)
+      && amount != null && detectTarget(text) && !detectAccount(text)) {
+      return {
+        intent: 'deposit',
+        to: detectTarget(text),
+        amount: maxNum,
+        cash: /מזומן/.test(t),
+        note: tidyThing(cleanNote(text, ['הפקדתי','הפקדה','הכנסתי','הפקדנו','שמתי','הוספתי','נכנס','קיבלתי','חשבון','לחשבון','בנק']))
+      };
     }
 
     /* --- הפקדה ליעד קיים --- */
@@ -259,11 +430,17 @@ window.Parser = (function () {
       }
     }
 
+    /* --- העברה בין חשבונות --- */
+    if (amount != null && srcAccount && dstAccount && srcAccount !== dstAccount
+      && /(העברתי|להעביר|תעביר|העבר|מעביר|משיכה|משכתי)/.test(t)) {
+      return { intent: 'transfer', from: srcAccount, to: dstAccount, amount: maxNum };
+    }
+
     /* --- הפרשות קבועות: חיסכון / מניות --- */
     const percent = findPercent(text);
     const isStocks = /(מניות|בורסה|השקעה|השקעות|קרן|אתפ|etf|s&p|סנופי)/.test(t);
     const isSavings = /(חיסכון|חסכון|לחסוך בצד|קופת גמל|פנסיה)/.test(t);
-    if ((isStocks || isSavings) && (amount != null || percent != null)) {
+    if ((isStocks || isSavings) && (amount != null || percent != null) && !srcAccount) {
       return {
         intent: 'allocation',
         kind: isStocks ? 'stocks' : 'savings',
@@ -273,8 +450,15 @@ window.Parser = (function () {
     }
 
     /* --- הגבלה חודשית --- */
-    if (/(הגבלה|הגבל|מגבלה|תקרה|מקסימום|לא יותר מ|תגביל|תקציב ל)/.test(t) && amount != null) {
-      return { intent: 'limit', category: explicitCategory(text), amount: maxNum };
+    if (/(הגבלה|הגבל|מגבלה|תקרה|מקסימום|לא יותר מ|תגביל|להגביל|תקציב ל)/.test(t) && amount != null) {
+      const subject = extractLimitSubject(text);
+      const known = CATEGORIES.some(c => c.name === subject) || customCats().some(c => c.name === subject);
+      return {
+        intent: 'limit',
+        category: subject || 'כללי',
+        isNew: !!subject && !known,   // נושא חדש שהמשתמש המציא
+        amount: maxNum
+      };
     }
 
     /* --- הכנסה חד־פעמית --- */
@@ -297,6 +481,7 @@ window.Parser = (function () {
         category: detectCategory(text),
         note: cleanNote(text) || detectCategory(text),
         cardName,
+        source: srcAccount || 'checking',   // מאיזה חשבון יצא הכסף
         date: detectDate(text)
       };
     }
@@ -304,5 +489,5 @@ window.Parser = (function () {
     return { intent: 'unknown', text };
   }
 
-  return { parse, CATEGORIES, categoryIcon, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote };
+  return { parse, CATEGORIES, categoryIcon, isFlexible, guessIcon, extractLimitSubject, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();
