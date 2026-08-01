@@ -10,9 +10,24 @@ window.Engine = (function () {
 
   /** מריץ הודעה של המשתמש ומחזיר HTML לתשובה */
   function handle(raw) {
+    const s = Store.get();
+    // כל עוד אשף ההקמה פעיל, ההודעה נקראת בהקשר של השלב הנוכחי
+    if (!s.setup.done) return Setup.handle(raw);
+
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
     return fn(p, raw);
+  }
+
+  /** שורת יתרות מצטברת — מוצגת אחרי כל תנועה */
+  function balancesLine() {
+    const s = Store.get();
+    if (!Store.hasBalances()) return '';
+    const parts = [];
+    if (s.declared.checking) parts.push('🏛️ ' + M(s.balances.checking));
+    if (s.declared.savings) parts.push('🐖 ' + M(s.balances.savings));
+    if (s.declared.stocks) parts.push('📈 ' + M(s.balances.stocks));
+    return '<hr><span class="muted">היתרות שלך: ' + parts.join(' · ') + '</span>';
   }
 
   /* ================= טקסטים משותפים ================= */
@@ -92,25 +107,40 @@ window.Engine = (function () {
     expense(p) {
       Store.snapshot('הוצאה');
       const card = p.cardName ? Store.findCard(p.cardName) : null;
+      const source = card ? null : (p.source || 'checking');
       const tx = Store.addTx({
         type: 'expense',
         amount: p.amount,
         category: p.category,
         note: p.note,
         date: p.date,
+        source: source,
         cardId: card ? card.id : null
       });
 
+      const A = Parser.ACCOUNTS;
       const plan = Store.monthlyPlan();
       let html = '<span class="m-title">✅ נרשמה הוצאה</span>'
         + bad('-' + M(tx.amount)) + ' · ' + Parser.categoryIcon(tx.category) + ' ' + U.esc(tx.category)
         + (tx.note && tx.note !== tx.category ? ' · ' + U.esc(tx.note) : '')
         + (card ? ' <span class="tag">' + U.esc(card.name) + '</span>' : '')
+        + (source && source !== 'checking' ? ' <span class="tag">' + A[source].icon + ' מה' + A[source].label + '</span>' : '')
         + (tx.date !== U.todayISO() ? ' <span class="tag">' + U.niceDate(tx.date) + '</span>' : '');
+
+      // משיכה מחיסכון או ממניות — שווה לומר מה זה עשה ליתרה שם
+      if (source && source !== 'checking' && Store.get().declared[source]) {
+        html += '<hr>' + A[source].icon + ' נשאר ב' + A[source].label + ': '
+          + b(M(Store.get().balances[source]));
+        if (source === 'savings') {
+          const goals = Store.activeGoals();
+          if (goals.length) html += '<br><span class="muted">שים לב שזה אותו כסף שמיועד ל' + U.esc(goals[0].name) + '.</span>';
+        }
+      }
 
       html += '<hr>' + afterExpenseAdvice(plan);
       html += limitWarning(tx.category);
       if (card) html += cardWarning(card);
+      html += balancesLine();
       return html;
     },
 
@@ -615,6 +645,81 @@ window.Engine = (function () {
       return html;
     },
 
+    /* ---------- העברה בין חשבונות ---------- */
+    transfer(p) {
+      Store.snapshot('העברה');
+      const A = Parser.ACCOUNTS;
+      Store.addTransfer(p.from, p.to, p.amount);
+      return '<span class="m-title">🔁 הכסף הועבר</span>'
+        + b(M(p.amount)) + ' מ' + A[p.from].label + ' ל' + A[p.to].label
+        + '<hr><span class="muted">זו לא הוצאה — הכסף רק עבר מקום, והתקציב החודשי לא הושפע.</span>'
+        + balancesLine();
+    },
+
+    /* ---------- "אותו דבר" ---------- */
+    sameAsBefore() {
+      const s = Store.get();
+      const plan = Store.monthlyPlan();
+      if (!s.profile.salary)
+        return '<span class="m-title">🤔 אין לי מה להשאיר</span>עוד לא הגדרת משכורת. כתוב «המשכורת שלי 12000».';
+
+      return '<span class="m-title">👌 בסדר, משאיר הכול כמו שהיה</span>'
+        + '<ul><li>משכורת: ' + b(M(s.profile.salary)) + '</li>'
+        + (plan.savings ? '<li>לחיסכון: ' + b(M(plan.savings)) + '</li>' : '')
+        + (plan.stocks ? '<li>למניות: ' + b(M(plan.stocks)) + '</li>' : '')
+        + (plan.goals ? '<li>ליעדים: ' + b(M(plan.goals)) + '</li>' : '')
+        + '</ul>'
+        + 'נשאר לך החודש: ' + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free)))
+        + (plan.daysLeft ? ' — ' + M(plan.dailyPace) + ' ליום.' : '.');
+    },
+
+    /* ---------- סיכום החודש שעבר ---------- */
+    monthReview() {
+      const rv = Store.monthReview();
+      if (!rv.spent)
+        return '<span class="m-title">📭 אין נתונים על ' + U.monthLabel(rv.month) + '</span>'
+          + 'לא רשמת הוצאות בחודש הזה, אז אין מה לסכם.'
+          + '<br><span class="muted">אחרי חודש שלם של רישום אוכל להראות לך בדיוק לאן הכסף הולך.</span>';
+
+      let html = '<span class="m-title">📅 סיכום ' + U.monthLabel(rv.month) + '</span>'
+        + '<ul><li>נכנס: ' + ok(M(rv.income)) + '</li>'
+        + '<li>יצא: ' + bad(M(rv.spent)) + '</li>'
+        + '<li><b>נשאר: ' + (rv.saved >= 0 ? ok(M(rv.saved)) : bad(M(rv.saved))) + '</b></li></ul>';
+
+      html += '<hr><b>לאן הלך הכסף</b><ul>'
+        + rv.rows.slice(0, 6).map(r => {
+          const trend = !rv.hasPrev || !r.before ? ''
+            : r.delta > 0 ? ' <span class="bad">▲ ' + M(r.delta) + '</span>'
+              : r.delta < 0 ? ' <span class="good">▼ ' + M(-r.delta) + '</span>' : '';
+          return '<li>' + Parser.categoryIcon(r.name) + ' ' + U.esc(r.name) + ' — ' + b(M(r.amount))
+            + ' <span class="muted">(' + r.share + '%)</span>' + trend + '</li>';
+        }).join('') + '</ul>';
+
+      if (rv.flexTotal) {
+        html += '<hr><b>💡 איפה אפשר לוותר</b><br>'
+          + 'מתוך ' + M(rv.spent) + ' שהוצאת, ' + warn(M(rv.flexTotal)) + ' (' + rv.flexShare + '%) '
+          + 'הלכו לדברים שאפשר לצמצם בלי לפגוע בחיים:<ul>'
+          + rv.flex.slice(0, 4).map(r => '<li>' + Parser.categoryIcon(r.name) + ' ' + U.esc(r.name) + ' — ' + M(r.amount) + '</li>').join('')
+          + '</ul>'
+          + 'קיצוץ שליש שם = ' + ok(M(rv.cutPotential)) + ' בחודש, ' + b(M(rv.cutPotential * 12)) + ' בשנה.';
+
+        const top = rv.flex[0];
+        if (top) {
+          const cap = Math.round(top.amount * 0.7 / 10) * 10;
+          html += '<br><span class="muted">רוצה שאשמור עליך? כתוב «הגבלה ל' + U.esc(top.name) + ' ' + U.num(cap) + '».</span>';
+        }
+      } else {
+        html += '<hr>✅ כל ההוצאות שלך היו בקטגוריות חיוניות — אין כאן שומן לחתוך.';
+      }
+
+      if (rv.grew.length) {
+        const g = rv.grew[0];
+        html += '<hr>📈 העלייה הגדולה ביותר מול ' + U.monthLabel(rv.prev) + ': '
+          + Parser.categoryIcon(g.name) + ' <b>' + U.esc(g.name) + '</b> — עלה ב־' + bad(M(g.delta)) + '.';
+      }
+      return html;
+    },
+
     /* ---------- מערכת ---------- */
     undo() {
       const label = Store.undo();
@@ -684,5 +789,43 @@ window.Engine = (function () {
     }
   };
 
-  return { handle, HANDLERS };
+  /**
+   * פתיחת חודש חדש: סיכום החודש שהסתיים, ואז השאלות החוזרות —
+   * מה המשכורת החודש, וכמה מפרישים לחיסכון ולהשקעות.
+   */
+  function monthlyCheckIn() {
+    const s = Store.get();
+    const rv = Store.monthReview();
+
+    let html = '<span class="m-title">🗓️ חודש חדש — ' + U.monthLabel(U.currentMonth()) + '</span>';
+
+    if (rv.spent) {
+      html += 'קודם כול, ככה נראה ' + U.monthLabel(rv.month) + ':<ul>'
+        + '<li>נכנס ' + ok(M(rv.income)) + ', יצא ' + bad(M(rv.spent))
+        + ', נשאר ' + (rv.saved >= 0 ? ok(M(rv.saved)) : bad(M(rv.saved))) + '</li>';
+      if (rv.rows.length) {
+        const top = rv.rows[0];
+        html += '<li>הכי הרבה הוצאת על ' + Parser.categoryIcon(top.name) + ' <b>' + U.esc(top.name)
+          + '</b> — ' + M(top.amount) + ' (' + top.share + '%)</li>';
+      }
+      if (rv.flexTotal) {
+        html += '<li>' + warn(M(rv.flexTotal)) + ' הלכו לדברים שאפשר לצמצם — '
+          + 'קיצוץ שליש שם משחרר ' + ok(M(rv.cutPotential)) + ' בחודש</li>';
+      }
+      html += '</ul><span class="muted">לפירוט מלא: «סיכום החודש שעבר».</span><hr>';
+    }
+
+    html += '<b>עכשיו בוא נכוון את החודש הזה:</b>'
+      + '<ol>'
+      + '<li>כמה נכנס לך החודש? <b>המשכורת שלי ' + U.num(s.profile.salary || 12000) + '</b></li>'
+      + '<li>כמה לחיסכון? <b>להפריש ' + U.num(Store.allocAmount('savings') || 1000) + ' לחיסכון</b>'
+      + ' <span class="muted">(או באחוזים: 10% לחיסכון)</span></li>'
+      + '<li>כמה למניות? <b>להפריש ' + U.num(Store.allocAmount('stocks') || 500) + ' למניות</b></li>'
+      + '</ol>'
+      + '<span class="muted">אם שום דבר לא השתנה — כתוב <b>אותו דבר</b> ואשאיר הכול כמו שהיה.</span>';
+
+    return html;
+  }
+
+  return { handle, HANDLERS, monthlyCheckIn, balancesLine };
 })();

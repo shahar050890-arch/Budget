@@ -11,9 +11,12 @@ global.localStorage = {
 };
 global.window = global;
 
-['util.js', 'store.js', 'parser.js', 'engine.js'].forEach(f => {
+['util.js', 'store.js', 'parser.js', 'setup.js', 'engine.js'].forEach(f => {
   eval(fs.readFileSync(path + f, 'utf8'));
 });
+
+// רוב הבדיקות עוסקות במצב שאחרי ההקמה; האשף עצמו נבדק בסוף.
+Store.get().setup.done = true;
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -245,6 +248,113 @@ check('קצב שריפה מוערך כשאין היסטוריה',
 const h = Store.health();
 check('ציון בריאות בטווח', h.score >= 0 && h.score <= 100, h.score);
 check('יש ממצאים', Array.isArray(h.issues) && h.issues.length > 0);
+
+console.log('\n== הוצאה מחשבון ספציפי ==');
+r = p('הוצאתי 500 מהחיסכון על מתנה');
+check('הוצאה מהחיסכון', r.intent === 'expense' && r.source === 'savings' && r.amount === 500, JSON.stringify(r));
+
+r = p('קניתי מצלמה 2000 מהמניות');
+check('הוצאה מהמניות', r.intent === 'expense' && r.source === 'stocks', JSON.stringify(r));
+
+r = p('קניתי קפה 28');
+check('ברירת מחדל היא עו"ש', r.intent === 'expense' && r.source === 'checking', JSON.stringify(r));
+
+r = p('העברתי 2000 מהחיסכון לעובר ושב');
+check('העברה בין חשבונות', r.intent === 'transfer' && r.from === 'savings' && r.to === 'checking' && r.amount === 2000, JSON.stringify(r));
+
+const sav0 = Store.get().balances.savings;
+const chk0 = Store.get().balances.checking;
+Engine.handle('הוצאתי 500 מהחיסכון על מתנה');
+check('הכסף יצא מהחיסכון ולא מהעו"ש',
+  Store.get().balances.savings === sav0 - 500 && Store.get().balances.checking === chk0,
+  Store.get().balances.savings + '/' + Store.get().balances.checking);
+
+const preTransfer = { s: Store.get().balances.savings, c: Store.get().balances.checking };
+const spentBefore = Store.monthExpense();
+Engine.handle('העברתי 1000 מהחיסכון לעובר ושב');
+check('העברה מזיזה כסף בין החשבונות',
+  Store.get().balances.savings === preTransfer.s - 1000 && Store.get().balances.checking === preTransfer.c + 1000,
+  Store.get().balances.savings + '/' + Store.get().balances.checking);
+check('העברה אינה הוצאה', Store.monthExpense() === spentBefore, Store.monthExpense());
+
+console.log('\n== סיכום חודשי ==');
+r = p('סיכום החודש שעבר');
+check('בקשת סיכום', r.intent === 'monthReview', JSON.stringify(r));
+
+r = p('אותו דבר');
+check('"אותו דבר"', r.intent === 'sameAsBefore', JSON.stringify(r));
+
+check('קטגוריות גמישות מסומנות',
+  Parser.isFlexible('מסעדות') && Parser.isFlexible('בילויים') && !Parser.isFlexible('דיור'));
+
+// בונים היסטוריה לחודש שעבר ובודקים שהסיכום מזהה איפה אפשר לוותר
+const prevMonth = U.prevMonth();
+[['מסעדות', 1200], ['בילויים', 800], ['דיור', 4000], ['מזון', 1500]].forEach(([cat, amt]) => {
+  Store.get().transactions.push({
+    id: U.uid(), type: 'expense', amount: amt, category: cat,
+    note: cat, date: prevMonth + '-15', source: 'checking'
+  });
+});
+Store.save();
+
+const rv = Store.monthReview();
+check('הסיכום מזהה הוצאה גדולה', rv.rows[0].name === 'דיור' && rv.rows[0].amount === 4000, JSON.stringify(rv.rows[0]));
+check('מחשב הוצאות גמישות', rv.flexTotal === 2000, rv.flexTotal);
+check('מציע פוטנציאל קיצוץ', rv.cutPotential > 0 && rv.cutPotential < rv.flexTotal, rv.cutPotential);
+
+ans = Engine.handle('סיכום החודש שעבר');
+check('הסיכום מציג איפה לוותר', /איפה אפשר לוותר/.test(ans), ans.slice(0, 100));
+check('הסיכום מציע הגבלה', /הגבלה ל/.test(ans));
+
+ans = Engine.monthlyCheckIn();
+check('פתיחת חודש שואלת על המשכורת', /המשכורת שלי/.test(ans), ans.slice(0, 100));
+check('פתיחת חודש שואלת על חיסכון והשקעות',
+  /לחיסכון/.test(ans) && /למניות/.test(ans));
+check('פתיחת חודש מציגה סיכום קודם', /הכי הרבה הוצאת/.test(ans));
+
+console.log('\n== אשף ההקמה ==');
+Store.reset();
+check('אשף פעיל בהתחלה', Store.get().setup.done === false);
+check('פתיחה מסבירה מה לכתוב', /כתוב בדיוק ככה/.test(Setup.start()));
+
+const script = [
+  ['12000', 'salary'],
+  ['יש לי בעובר ושב 8000', 'checking'],
+  ['יש לי בחיסכון 20000', 'savings'],
+  ['דלג', 'stocks'],
+  ['10% לחיסכון', 'allocSavings'],
+  ['דלג', 'allocStocks'],
+  ['כרטיס ויזה מסגרת 10000', 'cards'],
+  ['אין', 'debts'],
+  ['לחסוך לרכב 15000 ב-4 חודשים', 'goal']
+];
+script.forEach(([msg]) => Engine.handle(msg));
+
+check('האשף הסתיים', Store.get().setup.done === true);
+check('משכורת נקלטה באשף', Store.get().profile.salary === 12000);
+check('עו"ש נקלט באשף', Store.get().balances.checking === 8000);
+check('חיסכון נקלט באשף', Store.get().balances.savings === 20000);
+check('דילוג לא מגדיר מניות', !Store.get().declared.stocks);
+check('הפרשה באחוזים דרך האשף',
+  Store.get().allocations.savings.kind === 'percent' && Store.allocAmount('savings') === 1200,
+  JSON.stringify(Store.get().allocations.savings));
+check('כרטיס נקלט באשף', Store.get().cards.length === 1 && Store.get().cards[0].limit === 10000);
+check('אין חובות אחרי דילוג', Store.get().debts.length === 0);
+check('יעד נקלט באשף', Store.get().goals.length === 1 && Store.get().goals[0].target === 15000);
+
+// אחרי האשף, הודעה רגילה מטופלת כרגיל
+ans = Engine.handle('קניתי קפה 28');
+check('אחרי האשף חוזרים לזרימה רגילה', /נרשמה הוצאה/.test(ans), ans.slice(0, 60));
+check('היתרה המצטברת מוצגת', /היתרות שלך/.test(ans));
+
+// שלב חובה לא ניתן לדילוג
+Store.reset();
+ans = Engine.handle('דלג');
+check('שלב חובה לא מדלג', /את השאלה הזו אני חייב/.test(ans), ans.slice(0, 80));
+check('נשארנו באותו שלב', Store.get().setup.step === 0);
+
+ans = Engine.handle('בלה בלה');
+check('קלט בלי מספר מבקש שוב', /לא הצלחתי לקרוא/.test(ans), ans.slice(0, 80));
 
 console.log('\n== סיכום ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');

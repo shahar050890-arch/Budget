@@ -175,14 +175,22 @@ window.Render = (function () {
         lastDate = t.date;
       }
       const card = t.cardId ? Store.get().cards.find(c => c.id === t.cardId) : null;
+      const A = Parser.ACCOUNTS;
+      const isTransfer = t.type === 'transfer';
+      const sub = isTransfer
+        ? A[t.from].label + ' ← ' + A[t.to].label
+        : U.esc(t.category)
+          + (card ? ' · ' + U.esc(card.name) : '')
+          + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
+
       html += '<div class="row">'
-        + '<div class="row-ico">' + (t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
+        + '<div class="row-ico">' + (isTransfer ? '🔁' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
         + '<div class="row-main">'
         + '<div class="row-title">' + U.esc(t.note || t.category) + '</div>'
-        + '<div class="row-sub">' + U.esc(t.category) + (card ? ' · ' + U.esc(card.name) : '') + '</div>'
+        + '<div class="row-sub">' + sub + '</div>'
         + '</div>'
-        + '<div class="row-amt ' + (t.type === 'income' ? 'good' : 'bad') + '">'
-        + (t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
+        + '<div class="row-amt ' + (isTransfer ? '' : t.type === 'income' ? 'good' : 'bad') + '">'
+        + (isTransfer ? '' : t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
         + '<button class="row-del" data-del-tx="' + t.id + '" title="מחק">✕</button>'
         + '</div>';
     }

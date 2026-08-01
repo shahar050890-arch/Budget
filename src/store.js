@@ -15,6 +15,8 @@ window.Store = (function () {
     limits: {},         // {category: amount}
     allocations: {},    // {savings|stocks: {kind:'fixed'|'percent', value}}
     chat: [],           // {role:'me'|'bot', html, ts}
+    setup: { step: 0, done: false },  // אשף ההקמה בשימוש ראשון
+    lastMonthSeen: null,              // לזיהוי מעבר חודש
     history: []         // ל־undo: [{label, snapshot}]
   };
 
@@ -348,6 +350,53 @@ window.Store = (function () {
     return { score: U.clamp(Math.round(score), 0, 100), issues, plan };
   }
 
+  /**
+   * סיכום חודש: כמה נכנס, כמה יצא, ומה השתנה מול החודש שלפניו.
+   * זה מה שמאפשר לומר "כאן אתה מוציא הכי הרבה, וכאן אפשר לוותר".
+   */
+  function monthReview(mKey = U.prevMonth()) {
+    const prev = U.prevMonth(mKey);
+    const income = monthIncome(mKey);
+    const spent = monthExpense(mKey);
+    const cats = byCategory(mKey);
+    const prevCats = Object.fromEntries(byCategory(prev));
+
+    const rows = cats.map(([name, amount]) => {
+      const before = prevCats[name] || 0;
+      return {
+        name, amount, before,
+        delta: amount - before,
+        share: U.pct(amount, spent || 1),
+        flex: Parser.isFlexible(name)
+      };
+    });
+
+    const flex = rows.filter(r => r.flex);
+    const flexTotal = flex.reduce((s, r) => s + r.amount, 0);
+    const grew = rows.filter(r => r.before > 0 && r.delta > 0).sort((a, b) => b.delta - a.delta);
+
+    return {
+      month: mKey, prev, income, spent, rows,
+      saved: income - spent,
+      flex, flexTotal,
+      flexShare: U.pct(flexTotal, spent || 1),
+      grew,
+      hasPrev: Object.keys(prevCats).length > 0,
+      // כמה אפשר לחסוך בקיצוץ שליש מההוצאות הגמישות
+      cutPotential: Math.round(flexTotal / 3 / 10) * 10
+    };
+  }
+
+  /** האם עברנו לחודש חדש מאז הפעם הקודמת שנפתחה האפליקציה */
+  function isNewMonth() {
+    return state.lastMonthSeen !== null && state.lastMonthSeen !== U.currentMonth();
+  }
+
+  function markMonthSeen() {
+    state.lastMonthSeen = U.currentMonth();
+    save();
+  }
+
   /* ================= מוטציות ================= */
 
   /**
@@ -357,9 +406,14 @@ window.Store = (function () {
    */
   function applyBalance(t, dir) {
     const b = state.balances;
-    if (t.type === 'income') { b.checking += dir * t.amount; return; }
+    if (t.type === 'transfer') {
+      b[t.from] -= dir * t.amount;
+      b[t.to] += dir * t.amount;
+      return;
+    }
+    if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
     if (t.cardId) return;
-    b.checking -= dir * t.amount;
+    b[t.source || 'checking'] -= dir * t.amount;
     if (t.goalId || t.toSavings) b.savings += dir * t.amount;
     if (t.toStocks) b.stocks += dir * t.amount;
   }
@@ -377,6 +431,18 @@ window.Store = (function () {
     if (i < 0) return null;
     const [t] = state.transactions.splice(i, 1);
     applyBalance(t, -1);
+    save();
+    return t;
+  }
+
+  /** העברה בין חשבונות — לא הוצאה, רק הזזת כסף */
+  function addTransfer(from, to, amount, note) {
+    const t = {
+      id: U.uid(), type: 'transfer', from, to, amount,
+      note: note || 'העברה', date: U.todayISO(), category: 'העברה'
+    };
+    state.transactions.unshift(t);
+    applyBalance(t, 1);
     save();
     return t;
   }
@@ -515,7 +581,7 @@ window.Store = (function () {
     monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
     addTx, removeTx,
     setBalance, hasBalances, pendingCardCharges, totalAssets, netWorth, liquidNow,
-    savingsRate, health,
+    savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer,
     findCard, upsertCard, removeCard,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,

@@ -5,24 +5,30 @@ window.Parser = (function () {
 
   const CATEGORIES = [
     { name: 'מזון',      icon: '🛒', words: ['סופר','סופרמרקט','מכולת','שופרסל','רמי לוי','ויקטורי','יינות ביתן','אושר עד','טיב טעם','קניות','אוכל','מזון','ירקות','פירות','בשר','לחם','חלב'] },
-    { name: 'מסעדות',    icon: '🍔', words: ['מסעדה','מסעדות','קפה','קפהשק','בית קפה','ארוחה','פיצה','המבורגר','בורגר','שווארמה','פלאפל','סושי','משלוח','וולט','תן ביס','wolt','מאפה','קרואסון','גלידה','בר','פאב','בירה'] },
+    { flex: true, name: 'מסעדות',    icon: '🍔', words: ['מסעדה','מסעדות','קפה','קפהשק','בית קפה','ארוחה','פיצה','המבורגר','בורגר','שווארמה','פלאפל','סושי','משלוח','וולט','תן ביס','wolt','מאפה','קרואסון','גלידה','בר','פאב','בירה'] },
     { name: 'תחבורה',    icon: '🚗', words: ['דלק','תדלוק','סולר','בנזין','אוטובוס','רכבת','מונית','גט','אובר','חניה','חנייה','כביש 6','נסיעה','רב קו','רב־קו','טסט','ביטוח רכב','מוסך','צמיגים','טיפול לרכב','אופנוע','קורקינט'] },
     { name: 'דיור',      icon: '🏠', words: ['שכר דירה','שכירות','משכנתא','ארנונה','ועד בית','חשמל','מים','גז','תיקון','אינסטלטור','חשמלאי','ריהוט','איקאה','כלי בית'] },
     { name: 'תקשורת',    icon: '📱', words: ['סלולר','סלולרי','פלאפון','טלפון','אינטרנט','סלקום','פרטנר','הוט','yes','יס','בזק','גולן','רמי לוי תקשורת','חבילת גלישה'] },
-    { name: 'בילויים',   icon: '🎬', words: ['סרט','קולנוע','הצגה','תיאטרון','הופעה','כרטיסים','נטפליקס','netflix','ספוטיפיי','spotify','דיסני','משחק','פלייסטיישן','גיימינג','מנוי','בילוי','טיול','חופשה','מלון','צימר','טיסה'] },
+    { flex: true, name: 'בילויים',   icon: '🎬', words: ['סרט','קולנוע','הצגה','תיאטרון','הופעה','כרטיסים','נטפליקס','netflix','ספוטיפיי','spotify','דיסני','משחק','פלייסטיישן','גיימינג','מנוי','בילוי','טיול','חופשה','מלון','צימר','טיסה'] },
     { name: 'בריאות',    icon: '💊', words: ['רופא','רופאה','מרפאה','קופת חולים','כללית','מכבי','מאוחדת','לאומית','תרופות','בית מרקחת','סופר פארם','בדיקה','שיניים','שיננית','משקפיים','אופטיקה','ביטוח בריאות','פסיכולוג','פיזיותרפיה'] },
-    { name: 'ביגוד',     icon: '👕', words: ['בגדים','ביגוד','חולצה','מכנסיים','נעליים','סניקרס','זארה','קסטרו','fox','אופנה','תיק','מעיל','גרביים'] },
+    { flex: true, name: 'ביגוד',     icon: '👕', words: ['בגדים','ביגוד','חולצה','מכנסיים','נעליים','סניקרס','זארה','קסטרו','fox','אופנה','תיק','מעיל','גרביים'] },
     { name: 'ילדים',     icon: '🧸', words: ['גן','גנון','צהרון','מעון','בייביסיטר','חוג','חוגים','בית ספר','ילד','ילדים','תינוק','חיתולים','טיטולים','צעצוע','צעצועים'] },
     { name: 'חינוך',     icon: '📚', words: ['לימודים','שכר לימוד','אוניברסיטה','מכללה','קורס','ספרים','ספר','השתלמות','שיעור פרטי'] },
-    { name: 'טיפוח',     icon: '💇', words: ['תספורת','מספרה','ספר','קוסמטיקה','איפור','ציפורניים','מניקור','פדיקור','ספא','עיסוי','חדר כושר','כושר','מכון כושר','חיטוב'] },
+    { flex: true, name: 'טיפוח',     icon: '💇', words: ['תספורת','מספרה','ספר','קוסמטיקה','איפור','ציפורניים','מניקור','פדיקור','ספא','עיסוי','חדר כושר','כושר','מכון כושר','חיטוב'] },
     { name: 'ביטוח',     icon: '🛡️', words: ['ביטוח','פוליסה','ביטוח לאומי','ביטוח דירה','ביטוח חיים'] },
-    { name: 'מתנות',     icon: '🎁', words: ['מתנה','מתנות','תרומה','צדקה','חתונה','בר מצווה','יום הולדת'] },
+    { flex: true, name: 'מתנות',     icon: '🎁', words: ['מתנה','מתנות','תרומה','צדקה','חתונה','בר מצווה','יום הולדת'] },
     { name: 'חיות',      icon: '🐶', words: ['כלב','חתול','וטרינר','אוכל לכלב','חיית מחמד','פטשופ'] },
     { name: 'עמלות',     icon: '🏦', words: ['עמלה','עמלות','ריבית','בנק','משיכה','דמי ניהול'] },
     { name: 'חובות',     icon: '📉', words: [] },
     { name: 'חיסכון',    icon: '🐖', words: [] },
     { name: 'כללי',      icon: '💳', words: [] }
   ];
+
+  /** קטגוריה שאפשר לצמצם בה בלי לפגוע בחיים החיוניים */
+  function isFlexible(name) {
+    const c = CATEGORIES.find(x => x.name === name);
+    return !!(c && c.flex);
+  }
 
   function categoryIcon(name) {
     const c = CATEGORIES.find(x => x.name === name);
@@ -46,6 +52,41 @@ window.Parser = (function () {
       if (text.includes(c.name)) return c.name;
     }
     return detectCategory(text);
+  }
+
+  /* ---------------- חשבונות ---------------- */
+
+  const ACCOUNTS = {
+    checking: { icon: '🏛️', label: 'עובר ושב', words: ['עובר ושב','עו"ש','עוש','חשבון הבנק','חשבון בנק','הבנק','החשבון','העו"ש','מזומן'] },
+    savings:  { icon: '🐖', label: 'חיסכון',    words: ['חיסכון','חסכון','קרן החיסכון','קרן חיסכון','הפיקדון','פיקדון','החסכונות'] },
+    stocks:   { icon: '📈', label: 'תיק המניות', words: ['מניות','תיק המניות','תיק מניות','ההשקעות','השקעות','הבורסה','בורסה','התיק'] }
+  };
+
+  /**
+   * מאיזה חשבון יצא הכסף. מחפש רק צורות שמסמנות מקור ("מהחיסכון"),
+   * כדי ש"קניתי מניות" לא ייחשב כמשיכה מתיק המניות.
+   */
+  function detectAccount(text, prefixes = ['מה', 'מ', 'דרך ה', 'מתוך ה', 'מתוך ']) {
+    for (const key of Object.keys(ACCOUNTS)) {
+      for (const w of ACCOUNTS[key].words) {
+        for (const pre of prefixes) {
+          const re = new RegExp('(?:^|\\s)' + escapeRe(pre + w.replace(/^ה/, '')) + '(?:\\s|$|[,.?!])');
+          if (re.test(text)) return key;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** יעד ההעברה: "לחיסכון", "לעו״ש", "למניות" */
+  function detectTarget(text) {
+    for (const key of Object.keys(ACCOUNTS)) {
+      for (const w of ACCOUNTS[key].words) {
+        const re = new RegExp('(?:^|\\s)ל' + escapeRe(w.replace(/^ה/, '')) + '(?:\\s|$|[,.?!])');
+        if (re.test(text)) return key;
+      }
+    }
+    return null;
   }
 
   /* ---------------- כרטיסי אשראי ---------------- */
@@ -193,6 +234,10 @@ window.Parser = (function () {
     const text = normalize(raw);
     const t = text.toLowerCase();
     const nums = findNumbers(text);
+    // מאיזה חשבון יצא הכסף ולאן — נחוץ כבר עכשיו כדי ש"מהחיסכון"
+    // לא ייקרא בטעות כהפרשה *אל* החיסכון
+    const srcAccount = detectAccount(text);
+    const dstAccount = detectTarget(text);
     const amount = nums.length ? nums[0].value : null;
     const maxNum = nums.length ? Math.max(...nums.map(n => n.value)) : null;
 
@@ -231,6 +276,14 @@ window.Parser = (function () {
     if (/(חוב|הלוואה|מינוס)/.test(t) && /(לחסוך|חיסכון|להשקיע|מניות)/.test(t)
       && /(עדיף|כדאי|או|קודם|מה נכון|מה עדיף)/.test(t))
       return { intent: 'debtVsSave' };
+
+    /* --- "אותו דבר" בפתיחת חודש --- */
+    if (/^(אותו דבר|כמו קודם|כמו תמיד|בלי שינוי|אין שינוי|הכל אותו דבר|כרגיל|לא השתנה)/.test(t))
+      return { intent: 'sameAsBefore' };
+
+    /* --- סיכום החודש שעבר --- */
+    if (/(סיכום החודש|סיכום חודשי|חודש שעבר|החודש שעבר|דוח חודשי|מה היה בחודש|איך היה החודש|סיכום של החודש)/.test(t))
+      return { intent: 'monthReview' };
 
     /* --- ייעוץ כללי --- */
     if (/(תייעץ|להתייעץ|עצה|עצות|ממליץ|המלצה|המלצות|מה לעשות|מה כדאי|איך לחסוך|איך אני יכול לחסוך|תעזור לי|מה דעתך|איך אני עומד|אני בסדר|מה המצב שלי|תבדוק אותי|איפה אני מפסיד|איפה אני מבזבז|מה לצמצם)/.test(t))
@@ -312,11 +365,17 @@ window.Parser = (function () {
       }
     }
 
+    /* --- העברה בין חשבונות --- */
+    if (amount != null && srcAccount && dstAccount && srcAccount !== dstAccount
+      && /(העברתי|להעביר|תעביר|העבר|מעביר|משיכה|משכתי)/.test(t)) {
+      return { intent: 'transfer', from: srcAccount, to: dstAccount, amount: maxNum };
+    }
+
     /* --- הפרשות קבועות: חיסכון / מניות --- */
     const percent = findPercent(text);
     const isStocks = /(מניות|בורסה|השקעה|השקעות|קרן|אתפ|etf|s&p|סנופי)/.test(t);
     const isSavings = /(חיסכון|חסכון|לחסוך בצד|קופת גמל|פנסיה)/.test(t);
-    if ((isStocks || isSavings) && (amount != null || percent != null)) {
+    if ((isStocks || isSavings) && (amount != null || percent != null) && !srcAccount) {
       return {
         intent: 'allocation',
         kind: isStocks ? 'stocks' : 'savings',
@@ -350,6 +409,7 @@ window.Parser = (function () {
         category: detectCategory(text),
         note: cleanNote(text) || detectCategory(text),
         cardName,
+        source: srcAccount || 'checking',   // מאיזה חשבון יצא הכסף
         date: detectDate(text)
       };
     }
@@ -357,5 +417,5 @@ window.Parser = (function () {
     return { intent: 'unknown', text };
   }
 
-  return { parse, CATEGORIES, categoryIcon, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
+  return { parse, CATEGORIES, categoryIcon, isFlexible, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();

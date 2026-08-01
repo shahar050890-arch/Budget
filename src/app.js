@@ -78,6 +78,21 @@
     const box = document.getElementById('quickChips');
     const list = [];
 
+    // באמצע ההקמה מציעים רק את מה שרלוונטי לשלב הנוכחי
+    if (!s.setup.done) {
+      const st = Setup.step();
+      if (st) {
+        const opts = [st.format];
+        if (st.skippable) opts.push('דלג');
+        box.innerHTML = opts.map(t => '<button class="chip" type="button">' + U.esc(t) + '</button>').join('');
+        box.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+          document.getElementById('chatInput').value = c.textContent;
+          document.getElementById('chatInput').focus();
+        }));
+        return;
+      }
+    }
+
     if (!s.profile.salary) list.push('המשכורת שלי 12000');
     if (!s.declared.checking) list.push('יש לי בעובר ושב 8000');
     if (!s.declared.savings) list.push('יש לי בחיסכון 20000');
@@ -90,6 +105,7 @@
     if (s.debts.length) list.push('עדיף להחזיר את החוב או לחסוך?');
     list.push('מה המצב?');
     if (s.transactions.length) list.push('כמה הוצאתי על מזון?');
+    if (s.transactions.length) list.push('סיכום החודש שעבר');
     list.push('עזרה');
 
     box.innerHTML = list.slice(0, 5)
@@ -198,24 +214,31 @@
 
   function greet() {
     const s = Store.get();
-    if (s.profile.salary) {
-      bubble('bot', '👋 שלום שוב!<br>' + Engine.HANDLERS.report());
+    if (!s.setup.done) {
+      bubble('bot', Setup.start());
     } else {
-      bubble('bot',
-        '<span class="m-title">👋 היי, אני מנהל התקציב שלך</span>'
-        + 'פשוט תכתוב לי כאן כל דבר — כמה הוצאת, כמה המשכורת, אילו כרטיסים וחובות יש לך — ואני אסדר את התמונה המלאה.'
-        + '<hr>בוא נתחיל: <b>כמה המשכורת החודשית שלך?</b>'
-        + '<br><span class="muted">אפשר לכתוב פשוט «המשכורת שלי 12000». בכל שלב אפשר לכתוב «עזרה».</span>');
+      bubble('bot', '👋 שלום שוב!<br>' + Engine.HANDLERS.report());
     }
   }
 
   function init() {
     const s = Store.get();
+
     if (s.chat.length) {
       renderChatHistory();
-      // סיכום מצב עדכני בכניסה מחדש
-      bubble('bot', '📅 ' + U.niceDate(U.todayISO()) + ' · ' + U.monthLabel(U.currentMonth())
-        + '<hr>' + Engine.HANDLERS.report(), false);
+
+      if (!s.setup.done) {
+        // ההקמה נקטעה באמצע — ממשיכים מאותו שלב
+        const st = Setup.step();
+        if (st) bubble('bot', '<span class="m-title">👋 בוא נמשיך מאיפה שהפסקנו</span>' + Setup.prompt(st), false);
+      } else if (Store.isNewMonth()) {
+        // חודש חדש: סיכום החודש שהסתיים והשאלות החוזרות
+        bubble('bot', Engine.monthlyCheckIn());
+        Store.markMonthSeen();
+      } else {
+        bubble('bot', '📅 ' + U.niceDate(U.todayISO()) + ' · ' + U.monthLabel(U.currentMonth())
+          + '<hr>' + Engine.HANDLERS.report(), false);
+      }
     } else {
       greet();
     }
