@@ -796,12 +796,26 @@ window.Engine = (function () {
 
       Store.snapshot('הוראת קבע');
       const existed = !!Store.findStandingOrder(p.name);
-      const so = Store.addStandingOrder(p.name, p.amount, p.day, p.category);
+      const so = Store.addStandingOrder(p.name, p.amount, p.day, p.category, p.months);
       const posted = Store.standingPosted(so.id);
+      const left = Store.standingMonthsLeft(so);
 
       let html = '<span class="m-title">🔁 ' + (existed ? 'הוראת הקבע עודכנה' : 'נוספה הוראת קבע') + '</span>'
-        + Parser.categoryIcon(so.category) + ' <b>' + U.esc(so.name) + '</b> — ' + b(M(so.amount))
+        + Parser.categoryIcon(so.name) + ' <b>' + U.esc(so.name) + '</b> — ' + b(M(so.amount))
         + ' בכל <b>' + so.day + '</b> לחודש';
+
+      if (so.months) {
+        html += '<br>למשך <b>' + so.months + '</b> חודשים — עד '
+          + U.monthLabel(Store.standingLastMonth(so))
+          + ' <span class="muted">(נשארו ' + left + ')</span>'
+          + '<br>סה"כ לאורך התקופה: ' + b(M(so.amount * so.months)) + '.';
+      } else {
+        html += '<br><span class="muted">ללא תאריך סיום — תיזכר בכל חודש. '
+          + 'למשך מוגבל: «' + U.esc(so.name) + ' למשך 12 חודשים».</span>';
+      }
+
+      html += '<br><span class="muted">« ' + U.esc(so.name) + ' » נרשם כנושא בפני עצמו, '
+        + 'כך שההוצאה תופיע בשמו ולא תיבלע בקטגוריה כללית.</span>';
 
       if (!p.day) html += '<br><span class="muted">לא ציינת תאריך, אז שמתי את ה-1 לחודש. '
         + 'לשינוי: «' + U.esc(so.name) + ' ב-10 לחודש».</span>';
@@ -842,11 +856,14 @@ window.Engine = (function () {
         + sorted.map(o => {
           const done = Store.standingPosted(o.id);
           const mark = done ? '✅' : o.day <= today ? '⏳' : '🕐';
+          const left = Store.standingMonthsLeft(o);
           return '<li>' + mark + ' <b>' + U.esc(o.name) + '</b> — ' + M(o.amount)
             + ' ב-' + o.day + ' לחודש'
             + (done ? ' <span class="muted">(ירד)</span>'
               : o.day > today ? ' <span class="muted">(בעוד ' + (o.day - today) + ' ימים)</span>'
-                : ' <span class="muted">(ממתין)</span>') + '</li>';
+                : ' <span class="muted">(ממתין)</span>')
+            + (left != null ? ' <span class="pill">עוד ' + left + ' חודשים</span>' : '')
+            + '</li>';
         }).join('') + '</ul>';
 
       const total = Store.standingTotal();
@@ -855,6 +872,12 @@ window.Engine = (function () {
       html += '<hr>סה"כ ' + b(M(total)) + ' בחודש'
         + (income ? ' (' + U.pct(total, income) + '% מההכנסה)' : '')
         + (left ? '<br>עוד לא ירדו החודש: ' + warn(M(left)) : '<br>הכול כבר ירד החודש. ✅');
+
+      const ended = Store.endedStandingOrders();
+      if (ended.length) {
+        html += '<hr><span class="muted">הסתיימו: '
+          + ended.map(o => U.esc(o.name) + ' (' + M(o.amount) + ')').join(' · ') + '</span>';
+      }
       return html;
     },
 

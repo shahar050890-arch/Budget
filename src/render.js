@@ -232,10 +232,12 @@ window.Render = (function () {
         const done = Store.standingPosted(o.id);
         const due = !done && o.day <= today;
         const cls = done ? ' done' : due ? ' due' : '';
+        const left = Store.standingMonthsLeft(o);
         return '<div class="so-item' + cls + '" title="' + U.esc(o.name) + ' — ' + M(o.amount) + '">'
           + '<div class="so-day">' + (done ? '✅' : due ? '⏳' : '🕐') + ' ' + o.day + ' לחודש</div>'
-          + '<div class="so-name">' + Parser.categoryIcon(o.category) + ' ' + U.esc(o.name) + '</div>'
+          + '<div class="so-name">' + Parser.categoryIcon(o.name) + ' ' + U.esc(o.name) + '</div>'
           + '<div class="so-amt">' + M(o.amount) + '</div>'
+          + (left != null ? '<div class="so-day">עוד ' + left + ' חודשים</div>' : '')
           + '</div>';
       }).join('')
       + '</div>'
@@ -244,6 +246,7 @@ window.Render = (function () {
       + '<span>' + (Store.standingRemaining()
         ? 'טרם ירדו <b>' + M(Store.standingRemaining()) + '</b>'
         : 'הכול ירד החודש ✅') + '</span>'
+      + '<span>חוזרות אוטומטית בכל חודש</span>'
       + '</div>';
   }
 
@@ -347,6 +350,120 @@ window.Render = (function () {
 
   /* ---------------- יעדים והפרשות ---------------- */
 
+  /* ---------------- גרף חודשי ---------------- */
+
+  let selectedMonth = null;
+
+  /**
+   * הוצאות לפי חודש — עמודות בסדר כרונולוגי, סדרה אחת בגוון אחד.
+   * הגובה הוא הנתון; החודש הנוכחי מסומן בשקיפות כי הוא עוד לא הסתיים.
+   */
+  function months() {
+    const box = document.getElementById('monthsChart');
+    const data = Store.monthlyTotals(12);
+
+    if (!data.some(m => m.spent)) {
+      box.innerHTML = empty('אין עדיין נתונים להצגה.<br>אחרי חודש של רישום יופיע כאן גרף שמשווה בין החודשים.');
+      document.getElementById('monthDetail').innerHTML = '';
+      return;
+    }
+
+    const max = Math.max(...data.map(m => m.spent), 1);
+    if (!selectedMonth || !data.some(m => m.key === selectedMonth)) {
+      selectedMonth = data[data.length - 1].key;
+    }
+
+    box.innerHTML = '<div class="mchart">'
+      + data.map(m => {
+        const h = Math.max(3, Math.round((m.spent / max) * 130));
+        return '<button class="mcol' + (m.key === selectedMonth ? ' sel' : '')
+          + (m.isCurrent ? ' now' : '') + '" data-month="' + m.key + '"'
+          + ' title="' + U.esc(m.label) + ' — ' + M(m.spent) + '">'
+          + '<span class="mcol-val">' + (m.spent ? U.num(Math.round(m.spent / 100) / 10) + 'k' : '—') + '</span>'
+          + '<span class="mcol-bar" style="height:' + h + 'px"></span>'
+          + '<span class="mcol-name">' + m.short + '</span>'
+          + '</button>';
+      }).join('')
+      + '</div>';
+
+    const withData = data.filter(m => m.spent && !m.isCurrent);
+    const avg = withData.length ? Math.round(withData.reduce((s, m) => s + m.spent, 0) / withData.length) : 0;
+    const peak = data.reduce((a, m) => (m.spent > (a ? a.spent : 0) ? m : a), null);
+
+    box.innerHTML += '<div class="mchart-foot">'
+      + (avg ? '<span>ממוצע חודשי <b>' + M(avg) + '</b></span>' : '')
+      + (peak && peak.spent ? '<span>הכי גבוה: <b>' + peak.short + '</b> ' + M(peak.spent) + '</span>' : '')
+      + '<span>' + data.length + ' חודשים</span>'
+      + '</div>';
+
+    box.querySelectorAll('.mcol').forEach(btn =>
+      btn.addEventListener('click', () => { selectedMonth = btn.dataset.month; months(); }));
+
+    monthDetail(selectedMonth);
+  }
+
+  /** הפירוט המלא של החודש שנבחר בגרף */
+  function monthDetail(mKey) {
+    const box = document.getElementById('monthDetail');
+    const d = Store.monthDetail(mKey);
+    const prev = Store.monthDetail(U.prevMonth(mKey));
+
+    const diff = prev.spent ? d.spent - prev.spent : null;
+    const trend = diff == null ? ''
+      : diff > 0 ? '<span class="pill bad">▲ ' + M(diff) + ' מהחודש הקודם</span>'
+        : diff < 0 ? '<span class="pill good">▼ ' + M(-diff) + ' מהחודש הקודם</span>'
+          : '<span class="pill">ללא שינוי</span>';
+
+    let html = '<div class="card"><div class="card-head"><h2>' + U.esc(d.label) + '</h2>' + trend + '</div>';
+
+    html += '<div class="grid" style="margin-bottom:14px">'
+      + kpi('נכנס', M(d.income), 'good')
+      + kpi('יצא', M(d.spent), 'bad')
+      + kpi('נשאר', M(d.saved), d.saved >= 0 ? 'good' : 'bad')
+      + kpi('ממוצע ליום', M(d.avgPerDay), '')
+      + '</div>';
+
+    if (!d.count) {
+      html += empty('לא נרשמו הוצאות בחודש הזה.') + '</div>';
+      box.innerHTML = html;
+      return;
+    }
+
+    html += '<div class="viz">' + d.categories.map(([cat, val]) => {
+      const w = U.clamp((val / d.categories[0][1]) * 100, 1.5, 100);
+      return '<div class="viz-row">'
+        + '<div class="viz-name">' + Parser.categoryIcon(cat) + '<span>' + U.esc(cat) + '</span></div>'
+        + '<div class="viz-val">' + M(val) + ' · ' + U.pct(val, d.spent) + '%</div>'
+        + '<div class="viz-track"><div class="viz-bar" style="width:' + w + '%"></div></div>'
+        + '</div>';
+    }).join('') + '</div>';
+
+    html += '<div class="so-foot">'
+      + '<span>' + d.count + ' הוצאות</span>'
+      + (d.standingCount ? '<span>🔁 הוראות קבע <b>' + M(d.standingTotal) + '</b></span>' : '')
+      + (d.flex ? '<span>ניתן לצמצום <b>' + M(d.flex) + '</b></span>' : '')
+      + '</div>';
+
+    if (d.biggest.length) {
+      html += '<div style="margin-top:14px"><div class="date-sep">ההוצאות הגדולות</div>'
+        + d.biggest.map(t => '<div class="row">'
+          + '<div class="row-ico">' + Parser.categoryIcon(t.category) + '</div>'
+          + '<div class="row-main"><div class="row-title">' + U.esc(t.note || t.category) + '</div>'
+          + '<div class="row-sub">' + U.niceDate(t.date) + ' · ' + U.esc(t.category)
+          + (t.standingId ? ' · 🔁 הוראת קבע' : '') + '</div></div>'
+          + '<div class="row-amt bad">-' + M(t.amount) + '</div></div>').join('')
+        + '</div>';
+    }
+
+    html += '</div>';
+    box.innerHTML = html;
+  }
+
+  function kpi(label, value, cls) {
+    return '<div class="card kpi-card"><span class="kpi-label">' + label + '</span>'
+      + '<strong class="kpi-value ' + cls + '" style="font-size:20px">' + value + '</strong></div>';
+  }
+
   function events() {
     const box = document.getElementById('eventsList');
     const list = Store.get().events;
@@ -422,6 +539,7 @@ window.Render = (function () {
   function all() {
     dashboard();
     standing();
+    months();
     transactions();
     events();
     cards();
@@ -430,5 +548,5 @@ window.Render = (function () {
     allocations();
   }
 
-  return { all, dashboard, balances, standing, transactions, events, cards, debts, goals, allocations };
+  return { all, dashboard, balances, standing, months, monthDetail, transactions, events, cards, debts, goals, allocations };
 })();
