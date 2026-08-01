@@ -571,6 +571,120 @@ window.Engine = (function () {
       return html;
     },
 
+    /* ---------- הוראות קבע ---------- */
+    standingOrder(p) {
+      if (!p.name)
+        return '<span class="m-title">איך לקרוא להוראת הקבע?</span>'
+          + 'כתוב למשל: <b>הוראת קבע ארנונה 400 ב-15 לחודש</b>';
+
+      Store.snapshot('הוראת קבע');
+      const existed = !!Store.findStandingOrder(p.name);
+      const so = Store.addStandingOrder(p.name, p.amount, p.day, p.category);
+      const posted = Store.standingPosted(so.id);
+
+      let html = '<span class="m-title">🔁 ' + (existed ? 'הוראת הקבע עודכנה' : 'נוספה הוראת קבע') + '</span>'
+        + Parser.categoryIcon(so.category) + ' <b>' + U.esc(so.name) + '</b> — ' + b(M(so.amount))
+        + ' בכל <b>' + so.day + '</b> לחודש';
+
+      if (!p.day) html += '<br><span class="muted">לא ציינת תאריך, אז שמתי את ה-1 לחודש. '
+        + 'לשינוי: «' + U.esc(so.name) + ' ב-10 לחודש».</span>';
+
+      const total = Store.standingTotal();
+      const income = Store.monthIncome();
+      html += '<hr>סה"כ הוראות קבע: ' + b(M(total)) + ' בחודש'
+        + (income ? ' — ' + U.pct(total, income) + '% מההכנסה' : '') + '.';
+
+      if (posted) {
+        html += '<br>החיוב של החודש כבר נרשם.';
+      } else if (so.day <= U.dayOfMonth()) {
+        html += '<br>התאריך כבר עבר החודש — ארשום את החיוב עכשיו.';
+        const list = Store.postDueStandingOrders();
+        if (list.length) html += ' ✅ נרשמו ' + list.length + ' חיובים.';
+      } else {
+        html += '<br>יירד בעוד ' + b(so.day - U.dayOfMonth()) + ' ימים.';
+      }
+
+      const plan = Store.monthlyPlan();
+      html += '<hr>פנוי אחרי כל ההתחייבויות: '
+        + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '.';
+      if (plan.free < 0) html += '<br>⚠️ ההוראות הקבועות שלך גדולות ממה שנשאר.';
+      return html;
+    },
+
+    standingList() {
+      const list = Store.activeStandingOrders();
+      if (!list.length)
+        return '<span class="m-title">🔁 אין הוראות קבע</span>'
+          + 'אפשר להוסיף: <b>הוראת קבע ארנונה 400 ב-15 לחודש</b>'
+          + '<br><span class="muted">כל מה שיורד לך אוטומטית — שכר דירה, ביטוח, חדר כושר, מנויים.</span>';
+
+      const sorted = list.slice().sort((a, b) => a.day - b.day);
+      const today = U.dayOfMonth();
+
+      let html = '<span class="m-title">🔁 הוראות הקבע שלך</span><ul>'
+        + sorted.map(o => {
+          const done = Store.standingPosted(o.id);
+          const mark = done ? '✅' : o.day <= today ? '⏳' : '🕐';
+          return '<li>' + mark + ' <b>' + U.esc(o.name) + '</b> — ' + M(o.amount)
+            + ' ב-' + o.day + ' לחודש'
+            + (done ? ' <span class="muted">(ירד)</span>'
+              : o.day > today ? ' <span class="muted">(בעוד ' + (o.day - today) + ' ימים)</span>'
+                : ' <span class="muted">(ממתין)</span>') + '</li>';
+        }).join('') + '</ul>';
+
+      const total = Store.standingTotal();
+      const left = Store.standingRemaining();
+      const income = Store.monthIncome();
+      html += '<hr>סה"כ ' + b(M(total)) + ' בחודש'
+        + (income ? ' (' + U.pct(total, income) + '% מההכנסה)' : '')
+        + (left ? '<br>עוד לא ירדו החודש: ' + warn(M(left)) : '<br>הכול כבר ירד החודש. ✅');
+      return html;
+    },
+
+    standingDelete(p) {
+      const so = Store.findStandingOrder(p.name);
+      if (!so) return '<span class="m-title">לא מצאתי הוראת קבע כזו</span>'
+        + 'הקיימות: ' + (Store.activeStandingOrders().map(o => U.esc(o.name)).join(', ') || 'אין') + '.';
+      Store.snapshot('מחיקת הוראת קבע');
+      Store.removeStandingOrder(so.id);
+      return '🗑️ הוראת הקבע <b>' + U.esc(so.name) + '</b> (' + M(so.amount) + ') בוטלה.'
+        + '<br><span class="muted">חיובים שכבר נרשמו נשארו בעסקאות.</span>';
+    },
+
+    /* ---------- יום החיוב של הכרטיס ---------- */
+    billingDay(p) {
+      const s = Store.get();
+      if (!s.cards.length)
+        return '<span class="m-title">אין כרטיסים רשומים</span>כתוב «כרטיס ויזה קרדיט מסגרת 10000».';
+
+      const card = (p.cardName && Store.findCard(p.cardName)) || Store.creditCards()[0] || s.cards[0];
+      if (card.kind === 'debit')
+        return '<span class="m-title">🤔 ' + U.esc(card.name) + ' הוא דביט</span>'
+          + 'בדביט אין יום חיוב — כל קנייה יורדת מיד.';
+
+      Store.snapshot('יום חיוב');
+      card.billingDay = p.day;
+      Store.save();
+
+      const out = Store.cardOutstanding(card.id);
+      const days = Store.daysToBilling(card);
+
+      let html = '<span class="m-title">📅 עודכן יום החיוב</span>'
+        + '💳 <b>' + U.esc(card.name) + '</b> ייגבה בכל <b>' + p.day + '</b> לחודש.';
+
+      html += '<hr>החיוב הבא: ' + U.niceDate(Store.nextBillingDate(card))
+        + (days === 0 ? ' — <b>היום</b>' : ' (בעוד ' + b(days) + ' ימים)');
+      html += '<br>צפוי לרדת: ' + (out ? b(M(out)) : ok('0 ₪'))
+        + (out ? ' <span class="muted">לפי מה שנרשם עד עכשיו</span>' : '');
+
+      if (s.cards.length > 1) {
+        html += '<hr><span class="muted">מועדי החיוב שלך: '
+          + Store.creditCards().map(c => U.esc(c.name) + ' ב-' + c.billingDay).join(' · ')
+          + '</span>';
+      }
+      return html;
+    },
+
     /* ---------- אירועים ---------- */
     eventNew(p) {
       if (!p.name)
@@ -786,6 +900,7 @@ window.Engine = (function () {
         + (plan.savings ? '<li>חיסכון: ' + b(M(plan.savings)) + '</li>' : '')
         + (plan.stocks ? '<li>מניות: ' + b(M(plan.stocks)) + '</li>' : '')
         + (plan.goals ? '<li>יעדי חיסכון: ' + b(M(plan.goals)) + '</li>' : '')
+        + (plan.standing ? '<li>הוראות קבע שטרם ירדו: ' + b(M(plan.standing)) + '</li>' : '')
         + '<li><b>פנוי: ' + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '</b>'
         + (plan.daysLeft ? ' · ' + M(plan.dailyPace) + ' ליום ל־' + plan.daysLeft + ' ימים' : '') + '</li>'
         + '</ul>';
@@ -805,8 +920,27 @@ window.Engine = (function () {
           + '<br>הון נקי: ' + (Store.netWorth() >= 0 ? ok(M(Store.netWorth())) : bad(M(Store.netWorth())));
       }
 
-      if (s.cards.length) {
+      const bills = Store.upcomingBills();
+      if (bills.length) {
+        html += '<hr><b>חיובי אשראי צפויים:</b><ul>'
+          + bills.map(x => '<li>💳 ' + U.esc(x.card.name) + ' — ' + b(M(x.amount))
+            + ' ב-' + x.card.billingDay + ' לחודש'
+            + (x.days === 0 ? ' <b>(היום)</b>' : ' (בעוד ' + x.days + ' ימים)') + '</li>').join('')
+          + '</ul>';
+      } else if (s.cards.length) {
         html += '<hr><b>אשראי:</b> נוצלו ' + b(M(Store.totalCardUsed())) + ' מתוך ' + M(Store.totalCardLimit()) + ' מסגרת.';
+      }
+
+      const so = Store.activeStandingOrders();
+      if (so.length) {
+        html += '<hr><b>הוראות קבע:</b> ' + b(M(Store.standingTotal())) + ' בחודש על פני '
+          + so.length + ' חיובים.';
+        const upcoming = Store.upcomingStandingOrders();
+        if (upcoming.length) {
+          html += '<br><span class="muted">עוד לפניך: '
+            + upcoming.slice(0, 4).map(o => U.esc(o.name) + ' ' + M(o.amount) + ' ב-' + o.day).join(' · ')
+            + '</span>';
+        }
       }
       if (s.debts.length) {
         html += '<br><b>חובות:</b> ' + bad(M(Store.totalDebt())) + ' · החזר חודשי ' + M(Store.debtMonthly()) + '.';
@@ -1120,6 +1254,11 @@ window.Engine = (function () {
         + '<b>יעדים</b><ul>'
         + '<li>אני רוצה לחסוך לרכב שעולה 15000 ב־4 חודשים</li>'
         + '<li>הפקדתי 3750 לרכב</li></ul>'
+        + '<b>הוראות קבע ומועדי חיוב</b><ul>'
+        + '<li>הוראת קבע ארנונה 400 ב-15 לחודש</li>'
+        + '<li>הוראות קבע <span class="muted">— לראות את כולן</span></li>'
+        + '<li>תמחק הוראת קבע ארנונה</li>'
+        + '<li>ויזה חיוב ב-2 לחודש <span class="muted">— לשנות מתי האשראי יורד</span></li></ul>'
         + '<b>כמה כסף יש לי</b><ul>'
         + '<li>יש לי בעובר ושב 8000</li>'
         + '<li>יש לי בחיסכון 20000</li>'
@@ -1195,8 +1334,46 @@ window.Engine = (function () {
       + '</ol>'
       + '<span class="muted">אם שום דבר לא השתנה — כתוב <b>אותו דבר</b> ואשאיר הכול כמו שהיה.</span>';
 
+    const so = Store.activeStandingOrders();
+    if (so.length) {
+      html += '<hr>🔁 <b>הוראות הקבע שיירדו החודש:</b> ' + M(Store.standingTotal())
+        + '<br><span class="muted">'
+        + so.slice().sort((a, b) => a.day - b.day)
+          .map(o => U.esc(o.name) + ' ' + M(o.amount) + ' ב-' + o.day).join(' · ')
+        + '</span>';
+    }
+    const bills = Store.upcomingBills();
+    if (bills.length) {
+      html += '<br>💳 <b>חיוב אשראי:</b> '
+        + bills.map(x => U.esc(x.card.name) + ' ' + M(x.amount) + ' ב-' + x.card.billingDay).join(' · ');
+    }
+
     return html;
   }
 
-  return { handle, HANDLERS, monthlyCheckIn, balancesLine };
+  /** דיווח על הוראות קבע שנרשמו אוטומטית עם פתיחת האפליקציה */
+  function standingPostedNotice(posted) {
+    if (!posted.length) return null;
+    const total = posted.reduce((s, x) => s + x.order.amount, 0);
+    const plan = Store.monthlyPlan();
+    return '<span class="m-title">🔁 נרשמו הוראות הקבע של החודש</span>'
+      + '<ul>' + posted.map(x =>
+        '<li>' + Parser.categoryIcon(x.order.category) + ' ' + U.esc(x.order.name)
+        + ' — ' + M(x.order.amount) + ' <span class="muted">(ב-' + x.order.day + ' לחודש)</span></li>').join('')
+      + '</ul>'
+      + 'סה"כ ' + bad('-' + M(total)) + '.'
+      + '<hr>נשאר פנוי: ' + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '.';
+  }
+
+  /** תזכורת על חיוב אשראי שיורד היום או מחר */
+  function billingReminder() {
+    const soon = Store.upcomingBills().filter(x => x.days <= 1);
+    if (!soon.length) return null;
+    return '<span class="m-title">💳 חיוב אשראי מתקרב</span>'
+      + soon.map(x => '<b>' + U.esc(x.card.name) + '</b> — ' + b(M(x.amount))
+        + (x.days === 0 ? ' יורד <b>היום</b>' : ' יורד <b>מחר</b>')).join('<br>')
+      + '<hr><span class="muted">כשזה יירד, כתוב לי «ירד חיוב ' + U.esc(soon[0].card.name) + ' ' + U.num(soon[0].amount) + '».</span>';
+  }
+
+  return { handle, HANDLERS, monthlyCheckIn, balancesLine, standingPostedNotice, billingReminder };
 })();

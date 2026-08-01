@@ -544,6 +544,100 @@ Engine.handle('כרטיס ויזה קרדיט מסגרת 10000');
 r = p('שילמתי 250 באשראי על מסעדה');
 check('כרטיס יחיד — בלי שאלה', !r.cardAmbiguous, JSON.stringify(r));
 
+console.log('\n== הוראות קבע ==');
+Store.reset();
+Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 10000');
+
+r = p('הוראת קבע ארנונה 400 ב-15 לחודש');
+check('זיהוי הוראת קבע',
+  r.intent === 'standingOrder' && r.name === 'ארנונה' && r.amount === 400 && r.day === 15,
+  JSON.stringify(r));
+
+r = p('הוראת קבע חדר כושר 250 ב-3 לחודש');
+check('הוראת קבע עם שם דו־מילי', r.name === 'חדר כושר' && r.amount === 250 && r.day === 3, JSON.stringify(r));
+
+Engine.handle('הוראת קבע ארנונה 400 ב-15 לחודש');
+Engine.handle('הוראת קבע חדר כושר 250 ב-3 לחודש');
+check('נשמרו שתי הוראות קבע', Store.activeStandingOrders().length === 2);
+check('סה"כ חודשי', Store.standingTotal() === 650, Store.standingTotal());
+check('הקטגוריה זוהתה מהשם',
+  Store.findStandingOrder('ארנונה').category === 'דיור', Store.findStandingOrder('ארנונה').category);
+
+// ההתחייבות נכנסת לתוכנית החודשית
+plan = Store.monthlyPlan();
+check('הוראות קבע מקטינות את הפנוי',
+  plan.standing > 0 && plan.free === 12000 - plan.spent - plan.standing,
+  JSON.stringify({ standing: plan.standing, free: plan.free, spent: plan.spent }));
+
+// רישום אוטומטי של מה שהגיע מועדו
+const today = U.dayOfMonth();
+const dueCount = Store.dueStandingOrders().length;
+const chkBeforePost = Store.get().balances.checking;
+const postedList = Store.postDueStandingOrders();
+check('נרשמו רק אלה שהגיע מועדן', postedList.length === dueCount, postedList.length + '/' + dueCount);
+if (postedList.length) {
+  const sum = postedList.reduce((a, x) => a + x.order.amount, 0);
+  check('החיוב ירד מהעו"ש',
+    Store.get().balances.checking === chkBeforePost - sum, Store.get().balances.checking);
+  check('נספר כהוצאה', Store.monthExpense() === sum, Store.monthExpense());
+}
+check('אין רישום כפול', Store.postDueStandingOrders().length === 0);
+
+// אחרי שירדו, הם כבר לא התחייבות פתוחה
+const afterPost = Store.monthlyPlan();
+check('מה שירד כבר לא נספר כהתחייבות',
+  afterPost.standing === Store.standingRemaining(), afterPost.standing);
+check('אין ספירה כפולה של הוראת קבע',
+  afterPost.free === plan.free, plan.free + ' → ' + afterPost.free);
+
+r = p('הוראות קבע');
+check('בקשת רשימה', r.intent === 'standingList', JSON.stringify(r));
+ans = Engine.handle('הוראות קבע');
+check('הרשימה מציגה את שתיהן', /ארנונה/.test(ans) && /חדר כושר/.test(ans));
+check('הרשימה מציגה סה"כ', /650/.test(ans), ans.slice(0, 200));
+
+r = p('תמחק הוראת קבע ארנונה');
+check('מחיקת הוראת קבע', r.intent === 'standingDelete' && r.name === 'ארנונה', JSON.stringify(r));
+Engine.handle('תמחק הוראת קבע ארנונה');
+check('נמחקה', Store.activeStandingOrders().length === 1);
+
+console.log('\n== מועדי חיוב אשראי ==');
+Engine.handle('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב10');
+const vcard = Store.findCard('ויזה');
+check('יום החיוב נקלט בהגדרה', vcard.billingDay === 10, vcard.billingDay);
+
+r = p('ויזה חיוב ב-2 לחודש');
+check('שינוי יום חיוב', r.intent === 'billingDay' && r.day === 2 && r.cardName === 'ויזה', JSON.stringify(r));
+
+Engine.handle('ויזה חיוב ב-2 לחודש');
+check('יום החיוב עודכן', Store.findCard('ויזה').billingDay === 2, Store.findCard('ויזה').billingDay);
+
+Engine.handle('כרטיס מאסטרקארד קרדיט מסגרת 8000 חיוב ב25');
+check('לכל כרטיס יום משלו',
+  Store.findCard('ויזה').billingDay === 2 && Store.findCard('מאסטרקארד').billingDay === 25,
+  Store.findCard('ויזה').billingDay + '/' + Store.findCard('מאסטרקארד').billingDay);
+
+const nb = Store.nextBillingDate(Store.findCard('ויזה'));
+check('תאריך חיוב הבא מחושב', /^\d{4}-\d{2}-02$/.test(nb), nb);
+check('החיוב הבא בעתיד', Store.daysToBilling(Store.findCard('ויזה')) >= 0,
+  Store.daysToBilling(Store.findCard('ויזה')));
+
+Engine.handle('שילמתי 700 בויזה על בגדים');
+const bills = Store.upcomingBills();
+check('חיוב צפוי מופיע', bills.length === 1 && bills[0].amount === 700, JSON.stringify(bills.map(x => x.amount)));
+check('החיוב משויך לכרטיס הנכון', bills[0].card.name === 'ויזה');
+
+ans = Engine.handle('מה המצב?');
+check('הדוח מציג חיובים צפויים', /חיובי אשראי צפויים/.test(ans), ans.slice(0, 100));
+check('הדוח מציג הוראות קבע', /הוראות קבע/.test(ans));
+
+// דביט אין לו יום חיוב
+Engine.handle('כרטיס מקס דביט מסגרת 5000');
+ans = Engine.handle('מקס חיוב ב-5 לחודש');
+check('לדביט אין יום חיוב', /הוא דביט/.test(ans), ans.slice(0, 100));
+
 console.log('\n== אשף ההקמה ==');
 Store.reset();
 check('אשף פעיל בהתחלה', Store.get().setup.done === false);

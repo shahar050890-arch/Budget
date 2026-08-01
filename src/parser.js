@@ -300,7 +300,13 @@ window.Parser = (function () {
     words.sort((a, b) => b.length - a.length).forEach(w => {
       t = t.replace(new RegExp('(?:^|\\s)[בלהומשכ]{0,2}' + escapeRe(w) + '(?=\\s|$|[,.?!:;])', 'g'), ' ');
     });
-    return t.replace(/\d[\d,]*(?:\.\d+)?/g, ' ').replace(/[?!.,:;]/g, ' ').replace(/\s+/g, ' ').trim();
+    return t
+      .replace(/\d[\d,]*(?:\.\d+)?/g, ' ')
+      .replace(/[?!.,:;"'-]/g, ' ')
+      // אותיות יחס שנשארו תלושות אחרי הסרת המספר ("ארנונה ב־15" → "ארנונה ב")
+      .replace(/(^|\s)[בלהומשכ](?=\s|$)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /** ניקוי שם של דבר שנשאלה עליו שאלה: בלי פיסוק ובלי אותיות יחס תלושות */
@@ -443,6 +449,49 @@ window.Parser = (function () {
       const ev = detectEvent(text);
       if (ev) return { intent: 'eventQuery', name: ev.name };
       return { intent: 'query', category: explicitCategory(text) };
+    }
+
+    /* --- הוראות קבע --- */
+    if (/(הוראת קבע|הוראות קבע|הו"ק|תשלום קבוע|חיוב קבוע|מנוי חודשי)/.test(t)) {
+      if (/(תמחק|מחק|תסיר|הסר|בטל|תבטל|הפסק)/.test(t))
+        return { intent: 'standingDelete', name: stripWords(text,
+          ['תמחק','מחק','תסיר','הסר','בטל','תבטל','הפסק','הוראת','הוראות','קבע','את','לי','של']) || null };
+
+      if (amount == null)
+        return { intent: 'standingList' };
+
+      const day = (function () {
+        const m = text.match(/(?:ב|ל)\s*(\d{1,2})\s*(?:לחודש|בחודש|כל חודש)/);
+        if (m) return parseInt(m[1], 10);
+        const m2 = text.match(/(?:ביום|בתאריך)\s*(\d{1,2})/);
+        if (m2) return parseInt(m2[1], 10);
+        // מספר קטן שאינו הסכום — כנראה היום בחודש
+        const others = nums.map(n => n.value).filter(v => v !== maxNum && v >= 1 && v <= 31);
+        return others.length ? others[0] : null;
+      })();
+
+      const name = stripWords(text,
+        ['הוראת','הוראות','קבע','הו"ק','תשלום','קבוע','חיוב','מנוי','חודשי','תוסיף','הוסף','תפתח','לי','של','כל','חודש','לחודש','בחודש','שקל','שקלים','יש','על','ביום','בתאריך']);
+
+      return {
+        intent: 'standingOrder',
+        name: name || null,
+        amount: maxNum,
+        day,
+        category: name ? explicitCategory(name) : 'כללי'
+      };
+    }
+
+    /* --- שינוי יום החיוב של כרטיס --- */
+    if (/(חיוב|נגבה|מחויב|גובים|יורד)/.test(t)
+      && /(\d{1,2})\s*(?:לחודש|בחודש)/.test(text)
+      && !/מסגרת/.test(t)
+      && (detectCardName(text) || /כרטיס|אשראי/.test(t))
+      && !/(ירד|ירדה|נגבה מ|הורדה)/.test(t)) {
+      const day = parseInt(text.match(/(\d{1,2})\s*(?:לחודש|בחודש)/)[1], 10);
+      if (day >= 1 && day <= 31) {
+        return { intent: 'billingDay', cardName: detectCardName(text), day };
+      }
     }
 
     /* --- ניהול קטגוריות --- */

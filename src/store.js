@@ -15,6 +15,7 @@ window.Store = (function () {
     limits: {},         // {category: amount}
     customCategories: [], // קטגוריות שהמשתמש המציא: [{name, icon, flex}]
     events: [],         // אירועים לעקוב אחריהם: [{id,name,budget,startDate,closed}]
+    standing: [],       // הוראות קבע: [{id,name,amount,day,category,active}]
     pendingAsk: null,   // שאלה פתוחה שממתינה לתשובה, למשל על מה הייתה ההעברה
     allocations: {},    // {savings|stocks: {kind:'fixed'|'percent', value}}
     chat: [],           // {role:'me'|'bot', html, ts}
@@ -214,12 +215,13 @@ window.Store = (function () {
     const savings = allocAmount('savings');
     const stocks = allocAmount('stocks');
     const goals = goalsMonthly();
-    const committed = debts + savings + stocks + goals;
+    const standing = mKey === U.currentMonth() ? standingRemaining() : 0;
+    const committed = debts + savings + stocks + goals + standing;
     const free = income - spent - committed;
     const daysLeft = mKey === U.currentMonth() ? U.daysLeftInMonth() : 0;
 
     return {
-      month: mKey, income, spent, debts, savings, stocks, goals, committed, free,
+      month: mKey, income, spent, debts, savings, stocks, goals, standing, committed, free,
       daysLeft,
       dailyPace: daysLeft > 0 ? Math.floor(free / daysLeft) : free,
       spentPct: U.pct(spent, income || 1)
@@ -534,6 +536,117 @@ window.Store = (function () {
     save();
   }
 
+  /* ---------- הוראות קבע ---------- */
+
+  function addStandingOrder(name, amount, day, category) {
+    const existing = findStandingOrder(name);
+    if (existing) {
+      if (amount != null) existing.amount = amount;
+      if (day != null) existing.day = day;
+      if (category) existing.category = category;
+      existing.active = true;
+      save();
+      return existing;
+    }
+    const so = {
+      id: U.uid(), name, amount,
+      day: day || 1,
+      category: category || 'כללי',
+      active: true, createdAt: U.todayISO()
+    };
+    state.standing.push(so);
+    save();
+    return so;
+  }
+
+  function findStandingOrder(name) {
+    if (!name) return null;
+    const n = String(name).trim();
+    return state.standing.find(o => o.name === n)
+      || state.standing.find(o => o.name.includes(n) || n.includes(o.name)) || null;
+  }
+
+  function activeStandingOrders() {
+    return state.standing.filter(o => o.active);
+  }
+
+  function removeStandingOrder(id) {
+    state.standing = state.standing.filter(o => o.id !== id);
+    save();
+  }
+
+  /** האם הוראת הקבע כבר חויבה החודש */
+  function standingPosted(soId, mKey = U.currentMonth()) {
+    return txOfMonth(mKey).some(t => t.standingId === soId);
+  }
+
+  /** הוראות קבע שהיום שלהן הגיע ועדיין לא נרשמו */
+  function dueStandingOrders() {
+    const today = U.dayOfMonth();
+    return activeStandingOrders().filter(o => o.day <= today && !standingPosted(o.id));
+  }
+
+  /** הוראות קבע שעוד לפניהן החודש */
+  function upcomingStandingOrders() {
+    const today = U.dayOfMonth();
+    return activeStandingOrders().filter(o => o.day > today && !standingPosted(o.id));
+  }
+
+  /** סכום הוראות הקבע שטרם ירדו החודש — התחייבות פתוחה */
+  function standingRemaining() {
+    return activeStandingOrders()
+      .filter(o => !standingPosted(o.id))
+      .reduce((s, o) => s + o.amount, 0);
+  }
+
+  function standingTotal() {
+    return activeStandingOrders().reduce((s, o) => s + o.amount, 0);
+  }
+
+  /** רישום בפועל של הוראות הקבע שהגיע מועדן. מחזיר את מה שנרשם. */
+  function postDueStandingOrders() {
+    const due = dueStandingOrders();
+    const posted = [];
+    due.forEach(o => {
+      const t = addTx({
+        type: 'expense', amount: o.amount, category: o.category,
+        note: o.name, standingId: o.id, source: 'checking',
+        date: U.toISO(new Date(new Date().getFullYear(), new Date().getMonth(), o.day))
+      });
+      posted.push({ order: o, tx: t });
+    });
+    return posted;
+  }
+
+  /* ---------- מועדי חיוב אשראי ---------- */
+
+  /** תאריך החיוב הבא של הכרטיס */
+  function nextBillingDate(card) {
+    if (!card.billingDay) return null;
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), card.billingDay);
+    if (d < new Date(U.todayISO())) d.setMonth(d.getMonth() + 1);
+    return U.toISO(d);
+  }
+
+  /** כמה ימים נותרו עד החיוב הבא */
+  function daysToBilling(card) {
+    const iso = nextBillingDate(card);
+    if (!iso) return null;
+    return Math.round((new Date(iso) - new Date(U.todayISO())) / 86400000);
+  }
+
+  /** כל חיובי האשראי הצפויים, ממוינים לפי מועד */
+  function upcomingBills() {
+    return creditCards()
+      .filter(c => c.billingDay && cardOutstanding(c.id) > 0)
+      .map(c => ({
+        card: c, amount: cardOutstanding(c.id),
+        date: nextBillingDate(c), days: daysToBilling(c)
+      }))
+      .sort((a, b) => a.days - b.days);
+  }
+
   /* ---------- סליקת אשראי ---------- */
 
   /**
@@ -763,6 +876,10 @@ window.Store = (function () {
     findGoal, addGoal, removeGoal,
     setLimit, setAllocation, pushChat, addCustomCategory, removeCustomCategory,
     addEvent, findEvent, openEvents, eventTx, eventTotal, eventStatus, closeEvent, removeEvent,
-    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard
+    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard,
+    addStandingOrder, findStandingOrder, activeStandingOrders, removeStandingOrder,
+    standingPosted, dueStandingOrders, upcomingStandingOrders, standingRemaining,
+    standingTotal, postDueStandingOrders,
+    nextBillingDate, daysToBilling, upcomingBills
   };
 })();

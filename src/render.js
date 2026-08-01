@@ -182,7 +182,8 @@ window.Render = (function () {
       ['🏦', 'החזרי חובות', -plan.debts, 'bad'],
       ['🐖', 'הפרשה לחיסכון', -plan.savings, 'bad'],
       ['📈', 'הפרשה למניות', -plan.stocks, 'bad'],
-      ['🎯', 'יעדי חיסכון', -plan.goals, 'bad']
+      ['🎯', 'יעדי חיסכון', -plan.goals, 'bad'],
+      ['🔁', 'הוראות קבע שטרם ירדו', -plan.standing, 'bad']
     ].filter(r => r[2] !== 0);
 
     if (!rows.length) { box.innerHTML = empty('אין עדיין נתונים לתוכנית.'); return; }
@@ -199,6 +200,37 @@ window.Render = (function () {
   }
 
   /* ---------------- עסקאות ---------------- */
+
+  /** פס הוראות הקבע: מה ירד החודש, מה עוד לפניך, ומתי */
+  function standing() {
+    const box = document.getElementById('standingList');
+    const list = Store.activeStandingOrders();
+    if (!list.length) {
+      box.innerHTML = empty('אין הוראות קבע.<br>«הוראת קבע ארנונה 400 ב-15 לחודש»<br>שכר דירה, ביטוח, מנויים — כל מה שיורד לבד.');
+      return;
+    }
+    const today = U.dayOfMonth();
+    const sorted = list.slice().sort((a, b) => a.day - b.day);
+
+    box.innerHTML = '<div class="so-strip">'
+      + sorted.map(o => {
+        const done = Store.standingPosted(o.id);
+        const due = !done && o.day <= today;
+        const cls = done ? ' done' : due ? ' due' : '';
+        return '<div class="so-item' + cls + '" title="' + U.esc(o.name) + ' — ' + M(o.amount) + '">'
+          + '<div class="so-day">' + (done ? '✅' : due ? '⏳' : '🕐') + ' ' + o.day + ' לחודש</div>'
+          + '<div class="so-name">' + Parser.categoryIcon(o.category) + ' ' + U.esc(o.name) + '</div>'
+          + '<div class="so-amt">' + M(o.amount) + '</div>'
+          + '</div>';
+      }).join('')
+      + '</div>'
+      + '<div class="so-foot">'
+      + '<span>סה"כ בחודש <b>' + M(Store.standingTotal()) + '</b></span>'
+      + '<span>' + (Store.standingRemaining()
+        ? 'טרם ירדו <b>' + M(Store.standingRemaining()) + '</b>'
+        : 'הכול ירד החודש ✅') + '</span>'
+      + '</div>';
+  }
 
   function transactions() {
     const box = document.getElementById('txList');
@@ -232,6 +264,7 @@ window.Render = (function () {
             ? 'ירידת חיוב' + (card ? ' · ' + U.esc(card.name) : '')
             : U.esc(t.category)
             + (card ? ' · ' + U.esc(card.name) : '')
+            + (t.standingId ? ' · 🔁 הוראת קבע' : '')
             + (t.debit ? ' · ⚡ דביט' : t.onCard && t.cardId ? ' · 🕐 קרדיט' : '')
             + (t.method ? ' · ' + U.esc(t.method) : '')
             + (ev ? ' · 🎉 ' + U.esc(ev.name) : '')
@@ -373,6 +406,7 @@ window.Render = (function () {
 
   function all() {
     dashboard();
+    standing();
     transactions();
     events();
     cards();
@@ -381,5 +415,5 @@ window.Render = (function () {
     allocations();
   }
 
-  return { all, dashboard, balances, transactions, events, cards, debts, goals, allocations };
+  return { all, dashboard, balances, standing, transactions, events, cards, debts, goals, allocations };
 })();
