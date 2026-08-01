@@ -476,6 +476,8 @@ window.Store = (function () {
     if (t.type === 'transfer') { d[t.from] -= t.amount; d[t.to] += t.amount; return d; }
     // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
     if (t.type === 'deposit') { d[t.to] += t.amount; return d; }
+    // שינוי ערך: רווח או הפסד על הנכס עצמו, לא תנועת כסף
+    if (t.type === 'growth') { d[t.account] += t.gain; return d; }
     // סליקת אשראי: הכסף עוזב את העו"ש עבור הוצאות שכבר נרשמו
     if (t.type === 'settlement') { d.checking -= t.amount; return d; }
     if (t.type === 'income') { d[t.dest || 'checking'] += t.amount; return d; }
@@ -689,6 +691,8 @@ window.Store = (function () {
       baseCategory: category || 'כללי',
       months: months || null,
       startMonth: U.currentMonth(),
+      // מאיפה החיוב יורד: חשבון ישירות, או כרטיס אשראי
+      source: 'checking', cardId: null,
       active: true, createdAt: U.todayISO()
     };
     state.standing.push(so);
@@ -710,6 +714,16 @@ window.Store = (function () {
       fromStanding: true
     });
     save();
+  }
+
+  /** קביעת מקור התשלום של הוראת קבע: חשבון או כרטיס */
+  function setStandingSource(soId, source, cardId) {
+    const o = state.standing.find(x => x.id === soId);
+    if (!o) return null;
+    o.source = source;
+    o.cardId = cardId || null;
+    save();
+    return o;
   }
 
   /** החודש האחרון שבו ההוראה פעילה, אם הוגדר משך */
@@ -782,6 +796,13 @@ window.Store = (function () {
       .reduce((s, o) => s + o.amount, 0);
   }
 
+  /** מה מזה יורד ישירות מהחשבון (ולא דרך כרטיס אשראי) */
+  function standingFromAccount() {
+    return activeStandingOrders()
+      .filter(o => !standingPosted(o.id) && !o.cardId)
+      .reduce((s, o) => s + o.amount, 0);
+  }
+
   function standingTotal() {
     return activeStandingOrders().reduce((s, o) => s + o.amount, 0);
   }
@@ -791,9 +812,15 @@ window.Store = (function () {
     const due = dueStandingOrders();
     const posted = [];
     due.forEach(o => {
+      const card = o.cardId ? state.cards.find(c => c.id === o.cardId) : null;
       const t = addTx({
         type: 'expense', amount: o.amount, category: o.name,
-        baseCategory: o.baseCategory, note: o.name, standingId: o.id, source: 'checking',
+        baseCategory: o.baseCategory, note: o.name, standingId: o.id,
+        // חיוב על כרטיס קרדיט לא יורד מהעו"ש עכשיו — הוא ייגבה בחיוב החודשי
+        source: card ? null : (o.source || 'checking'),
+        cardId: card ? card.id : null,
+        onCard: card ? true : null,
+        debit: card ? card.kind === 'debit' : null,
         date: U.toISO(new Date(new Date().getFullYear(), new Date().getMonth(), o.day))
       });
       posted.push({ order: o, tx: t });
@@ -947,6 +974,25 @@ window.Store = (function () {
   function liquidNow() {
     return balanceILS('checking') + balanceILS('cash')
       - pendingCardCharges() - standingRemaining();
+  }
+
+  /**
+   * שינוי ערך של חשבון באחוזים — תשואה על מניות, ריבית על חיסכון.
+   * נרשם כתנועה כדי שהיתרה, התנועה החודשית והביטול יישארו עקביים.
+   */
+  function applyGrowth(kind, pct) {
+    const before = state.balances[kind] || 0;
+    const gain = Math.round(before * (pct / 100) * 100) / 100;
+    const t = {
+      id: U.uid(), type: 'growth', account: kind, amount: Math.abs(gain),
+      pct, gain,
+      note: (gain >= 0 ? 'עלייה של ' : 'ירידה של ') + Math.abs(pct) + '%',
+      date: U.todayISO(), category: 'תשואה'
+    };
+    state.transactions.unshift(t);
+    applyBalance(t, 1);
+    save();
+    return { before, gain, after: state.balances[kind], tx: t };
   }
 
   /* ---------- מועד המשכורת ---------- */
@@ -1107,6 +1153,7 @@ window.Store = (function () {
     standingPosted, dueStandingOrders, upcomingStandingOrders, standingRemaining,
     standingTotal, postDueStandingOrders, endedStandingOrders,
     standingLastMonth, standingInEffect, standingMonthsLeft,
+    setStandingSource, standingFromAccount, applyGrowth,
     monthlyTotals, monthDetail,
     nextBillingDate, daysToBilling, upcomingBills
   };

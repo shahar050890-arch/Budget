@@ -373,10 +373,19 @@ window.Parser = (function () {
     const text = normalize(raw);
     const t = text.toLowerCase();
     const nums = findNumbers(text);
+
+    /** לאיזה חשבון מתייחס הטקסט */
+    function balKindOf(tt) {
+      return /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(tt) ? 'checking'
+        : /(מזומן|בארנק|ארנק)/.test(tt) ? 'cash'
+          : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(tt) ? 'stocks'
+            : /(בחיסכון|בחסכון|חיסכון|חסכון|קרן חיסכון|פיקדון)/.test(tt) ? 'savings' : null;
+    }
     // מאיזה חשבון יצא הכסף ולאן — נחוץ כבר עכשיו כדי ש"מהחיסכון"
     // לא ייקרא בטעות כהפרשה *אל* החיסכון
     const srcAccount = detectAccount(text);
     const dstAccount = detectTarget(text);
+    const percent = findPercent(text);
     const amount = nums.length ? nums[0].value : null;
     const maxNum = nums.length ? Math.max(...nums.map(n => n.value)) : null;
 
@@ -385,7 +394,8 @@ window.Parser = (function () {
       return { intent: 'help' };
 
     /* --- יתרות בפועל --- */
-    function balKindOf(tt) {
+    // הוגדר למעלה
+    function _unusedBalKind(tt) {
       return /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(tt) ? 'checking'
         : /(מזומן|בארנק|ארנק)/.test(tt) ? 'cash'
           : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(tt) ? 'stocks'
@@ -498,7 +508,8 @@ window.Parser = (function () {
       const name = stripWords(text,
         ['הוראת','הוראות','קבע','הו"ק','תשלום','תשלומים','קבוע','חיוב','מנוי','חודשי','חודשים',
          'תוסיף','הוסף','תפתח','לי','של','כל','חודש','לחודש','בחודש','שקל','שקלים','יש','על',
-         'ביום','בתאריך','למשך','במשך','פעמים','שנה','שנתיים','חצי']);
+         'ביום','בתאריך','למשך','במשך','פעמים','שנה','שנתיים','חצי',
+         'מהחשבון','מהעו"ש','מהבנק','ישירות','בנקאית'].concat(CARD_BRANDS));
 
       return {
         intent: 'standingOrder',
@@ -506,6 +517,9 @@ window.Parser = (function () {
         amount: maxNum,
         day,
         months,
+        // אפשר לציין את הכרטיס כבר בשורה: "...ב-8 לחודש בויזה"
+        cardName: detectCardName(text),
+        fromAccount: /(מהחשבון|מהעו"ש|מהבנק|ישירות מהחשבון|הוראת קבע בנקאית)/.test(t),
         category: name ? explicitCategory(name) : 'כללי'
       };
     }
@@ -549,6 +563,13 @@ window.Parser = (function () {
       const code = /(דולר)/.test(t) ? 'USD' : 'ILS';
       const kind = balKindOf(t);
       return { intent: 'setCurrency', kind, code, all: /(הכל|הכול|כל הכסף|כל החשבונות)/.test(t) };
+    }
+
+    /* --- עלייה או ירידה בערך: תשואה על מניות, ריבית על חיסכון --- */
+    if (percent != null && /(עלו|עלה|עלתה|ירדו|ירד|ירדה|עלייה|עליה|ירידה|תשואה|הרוויח|הרוויחו|הפסיד|הפסידו|צמח|צמחו|גדל|גדלו)/.test(t)) {
+      const kind = balKindOf(t) || 'stocks';
+      const down = /(ירדו|ירד|ירדה|ירידה|הפסיד|הפסידו|מינוס)/.test(t);
+      return { intent: 'growth', kind, pct: down ? -percent : percent };
     }
 
     /* --- ניהול קטגוריות --- */
@@ -682,7 +703,6 @@ window.Parser = (function () {
     }
 
     /* --- הפרשות קבועות: חיסכון / מניות --- */
-    const percent = findPercent(text);
     const isStocks = /(מניות|בורסה|השקעה|השקעות|קרן|אתפ|etf|s&p|סנופי)/.test(t);
     const isSavings = /(חיסכון|חסכון|לחסוך בצד|קופת גמל|פנסיה)/.test(t);
     if ((isStocks || isSavings) && (amount != null || percent != null) && !srcAccount) {

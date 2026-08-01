@@ -34,6 +34,10 @@ window.Engine = (function () {
       const answered = answerDeleteChoice(raw);
       if (answered) return answered;
     }
+    if (s.pendingAsk && s.pendingAsk.type === 'standingSource') {
+      const answered = answerStandingSource(raw);
+      if (answered) return answered;
+    }
 
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
@@ -264,6 +268,76 @@ window.Engine = (function () {
 
     return '<span class="m-title">🤔 לא הבנתי איזו</span>'
       + 'תכתוב את המספר ברשימה (1 עד ' + ids.length + '), את הסכום, או «הכל».';
+  }
+
+  function standingSourceOptions() {
+    const s = Store.get();
+    return '<ul>'
+      + s.cards.map(c => '<li>💳 <b>' + U.esc(c.name) + '</b> — ' + kindLabel(c) + '</li>').join('')
+      + '<li>🏛️ <b>מהחשבון</b> — יורד ישירות מהעו"ש</li>'
+      + '</ul>';
+  }
+
+  /** תשובה על "מאיפה הוראת הקבע יורדת?" */
+  function answerStandingSource(raw) {
+    const s = Store.get();
+    const so = s.standing.find(o => o.id === s.pendingAsk.soId);
+    if (!so) { s.pendingAsk = null; Store.save(); return null; }
+
+    const text = Parser.normalize(raw).trim();
+
+    if (/^(מהחשבון|חשבון|עו"ש|עוש|ישירות|בנק|מהבנק|העברה)/.test(text)) {
+      s.pendingAsk = null;
+      Store.setStandingSource(so.id, 'checking', null);
+      return standingSourceDone(so, null);
+    }
+
+    const card = Store.findCard(Parser.detectCardName(text) || Parser.tidyThing(text));
+    if (card) {
+      s.pendingAsk = null;
+      Store.setStandingSource(so.id, 'card', card.id);
+      return standingSourceDone(so, card);
+    }
+
+    return '<span class="m-title">🤔 לא זיהיתי</span>מאיפה ' + U.esc(so.name) + ' יורד?'
+      + standingSourceOptions();
+  }
+
+  function standingSourceDone(so, card) {
+    const s = Store.get();
+
+    // אם חיוב של החודש כבר נרשם קודם, מעבירים אותו למקור הנכון
+    const existing = s.transactions.find(t => t.standingId === so.id
+      && U.monthKey(t.date) === U.currentMonth());
+    if (existing) {
+      if (card) Store.setTxCard(existing.id, card.id);
+      else Store.setTxSource(existing.id, 'checking');
+    }
+
+    // עכשיו כשידוע מאיפה — אפשר לרשום את החיוב אם מועדו כבר עבר
+    const posted = Store.postDueStandingOrders();
+
+    let html = '<span class="m-title">✅ נקבע</span>'
+      + '🔁 <b>' + U.esc(so.name) + '</b> — ' + M(so.amount) + ' בכל ' + so.day + ' לחודש';
+
+    html += '<hr>' + (card
+      ? '💳 יירד דרך <b>' + U.esc(card.name) + '</b>'
+        + (card.kind === 'debit'
+          ? ' — דביט, כלומר יורד מהעו"ש ביום החיוב.'
+          : ' — קרדיט, כלומר ייצבר לחיוב של ' + card.billingDay + ' לחודש ולא יירד בנפרד.')
+      : '🏛️ יירד <b>ישירות מהעו"ש</b> ב-' + so.day + ' לחודש.');
+
+    const plan = Store.monthlyPlan();
+    html += '<hr>סה"כ הוראות קבע: ' + b(M(Store.standingTotal())) + ' בחודש';
+    const fromAcc = Store.standingFromAccount();
+    if (fromAcc !== Store.standingRemaining()) {
+      html += '<br><span class="muted">מזה ' + M(fromAcc) + ' יורדים מהחשבון והשאר דרך האשראי.</span>';
+    }
+    if (posted.length) {
+      html += '<br><span class="muted">התאריך כבר עבר החודש, אז רשמתי את החיוב עכשיו.</span>';
+    }
+    html += '<br>פנוי החודש: ' + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '.';
+    return html;
   }
 
   function kindLabel(c) {
@@ -594,16 +668,34 @@ window.Engine = (function () {
 
     /* ---------- משכורת ---------- */
     salary(p) {
-      Store.snapshot('משכורת');
       const s = Store.get();
+      const old = s.profile.salary || 0;
+      const changed = old > 0 && old !== p.amount;
+
+      // צילום המצב לפני, כדי להראות בדיוק מה השתנה בעקבות המשכורת
+      const beforePlan = Store.monthlyPlan();
+      const beforeAlloc = {
+        savings: Store.allocAmount('savings'),
+        stocks: Store.allocAmount('stocks')
+      };
+
+      Store.snapshot('משכורת');
       s.profile.salary = p.amount;
       if (p.salaryDay) s.profile.salaryDay = p.salaryDay;
       Store.save();
 
       const plan = Store.monthlyPlan();
-      let html = '<span class="m-title">🧾 המשכורת נקלטה</span>'
-        + 'משכורת חודשית: ' + ok(M(p.amount))
-        + (p.salaryDay ? ' (נכנסת ב־' + p.salaryDay + ' לחודש)' : '');
+      const diff = p.amount - old;
+
+      let html = '<span class="m-title">🧾 ' + (changed ? 'המשכורת עודכנה' : 'המשכורת נקלטה') + '</span>';
+
+      if (changed) {
+        html += M(old) + ' → <b>' + M(p.amount) + '</b> '
+          + (diff > 0 ? ok('(+' + M(diff) + ')') : bad('(' + M(diff) + ')'));
+      } else {
+        html += 'משכורת חודשית: ' + ok(M(p.amount));
+      }
+      if (p.salaryDay) html += '<br>נכנסת ב-' + p.salaryDay + ' לחודש.';
 
       // הצעת חלוקה ראשונית אם עוד אין הפרשות
       if (!Object.keys(s.allocations).length) {
@@ -611,9 +703,60 @@ window.Engine = (function () {
         const stk = Math.round(p.amount * 0.05 / 50) * 50;
         html += '<hr>הצעה להתחלה (כלל 10/5): להפריש ' + b(M(sav)) + ' לחיסכון ו־' + b(M(stk)) + ' למניות בכל חודש.'
           + '<br><span class="muted">רוצה? כתוב לי: «להפריש ' + U.num(sav) + ' לחיסכון»</span>';
-      } else {
-        html += '<hr>פנוי החודש אחרי כל ההתחייבויות: ' + ok(M(plan.free)) + '.';
+        return html;
       }
+
+      if (!changed) {
+        html += '<hr>פנוי החודש אחרי כל ההתחייבויות: ' + ok(M(plan.free)) + '.';
+        return html;
+      }
+
+      // --- מה השתנה בעקבות המשכורת ---
+      html += '<hr><b>מה השתנה בעקבות זה:</b><ul>';
+
+      Object.keys(s.allocations).forEach(k => {
+        const a = s.allocations[k];
+        if (a.kind !== 'percent') return;
+        const now = Store.allocAmount(k);
+        const was = beforeAlloc[k];
+        if (now === was) return;
+        const name = k === 'stocks' ? 'מניות' : 'חיסכון';
+        html += '<li>ההפרשה ל' + name + ' (' + a.value + '%) — '
+          + M(was) + ' → <b>' + M(now) + '</b></li>';
+      });
+
+      html += '<li>פנוי החודש — ' + M(beforePlan.free) + ' → <b>'
+        + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '</b></li>';
+
+      if (plan.daysLeft) {
+        html += '<li>קצב יומי — ' + M(beforePlan.dailyPace) + ' → <b>' + M(plan.dailyPace) + '</b> ליום'
+          + (plan.paceHorizon === 'salary' ? ' עד המשכורת הבאה' : '') + '</li>';
+      }
+      html += '</ul>';
+
+      // הפרשות קבועות בסכום — לא מתעדכנות לבד, וזה שווה לומר
+      const fixed = Object.keys(s.allocations).filter(k => s.allocations[k].kind !== 'percent');
+      if (fixed.length) {
+        html += '<span class="muted">ההפרשות שהגדרת בסכום קבוע ('
+          + fixed.map(k => k === 'stocks' ? 'מניות' : 'חיסכון').join(', ')
+          + ') לא השתנו. אם תרצה שיזוזו עם המשכורת — הגדר אותן באחוזים.</span>';
+      }
+
+      // יעדי חיסכון — האם עדיין ריאליים
+      const goals = Store.activeGoals();
+      if (goals.length) {
+        const need = Store.goalsMonthly();
+        html += '<hr>' + (plan.free < 0
+          ? '🚨 עם המשכורת החדשה אתה בגירעון של ' + bad(M(-plan.free))
+            + ' — היעדים שלך כבר לא מכוסים.'
+          : need > plan.free + need
+            ? '⚠️ היעדים נעשו הדוקים יותר.'
+            : '✅ היעדים עדיין מכוסים — ' + M(need) + ' בחודש מתוך ' + M(plan.free + need) + ' פנויים.');
+      }
+
+      const sr = Store.savingsRate();
+      if (sr) html += '<hr>שיעור החיסכון שלך עכשיו: ' + b(sr + '%') + ' מההכנסה.';
+
       return html;
     },
 
@@ -860,6 +1003,48 @@ window.Engine = (function () {
           + '<br><span class="muted">להחזיר: «תשאל על כל הוצאה».</span>';
     },
 
+    /* ---------- עלייה או ירידה בערך ---------- */
+    growth(p) {
+      const s = Store.get();
+      const LABEL = {
+        checking: ['🏛️', 'עובר ושב'], cash: ['💵', 'מזומן'],
+        savings: ['🐖', 'החיסכון'], stocks: ['📈', 'תיק המניות']
+      };
+      const [ico, label] = LABEL[p.kind];
+
+      if (!s.declared[p.kind])
+        return '<span class="m-title">🤔 אין לי סכום התחלתי</span>'
+          + 'כדי לחשב עלייה באחוזים אני צריך לדעת כמה יש שם.'
+          + '<br><span class="muted">כתוב קודם «יש לי ב' + label.replace(/^ה/, '') + ' 15000».</span>';
+
+      Store.snapshot('שינוי ערך');
+      const r = Store.applyGrowth(p.kind, p.pct);
+      const cur = FX.accountCurrency(p.kind);
+      const up = r.gain >= 0;
+
+      let html = '<span class="m-title">' + (up ? '📈' : '📉') + ' ' + label + ' '
+        + (up ? 'עלה' : 'ירד') + ' ב-' + Math.abs(p.pct) + '%</span>'
+        + FX.money(r.before, cur) + ' → <b>' + FX.money(r.after, cur) + '</b>'
+        + '<hr>' + (up ? ok('+' + FX.money(r.gain, cur)) : bad(FX.money(r.gain, cur)))
+        + (cur === 'USD' ? ' <span class="muted">(' + M(FX.toILS(Math.abs(r.gain), 'USD')) + ')</span>' : '');
+
+      const assets = Store.totalAssets();
+      html += '<hr>סה"כ נכסים: ' + b(M(assets))
+        + '<br>הון נקי: ' + (Store.netWorth() >= 0 ? ok(M(Store.netWorth())) : bad(M(Store.netWorth())));
+
+      // הרווח מול ההפרשה החודשית — נותן פרופורציה
+      const alloc = Store.allocAmount(p.kind === 'stocks' ? 'stocks' : 'savings');
+      if (alloc && up) {
+        const months = r.gain / alloc;
+        html += '<hr><span class="muted">הרווח הזה שווה ל-' + months.toFixed(1)
+          + ' חודשי הפרשה (' + M(FX.toILS(alloc, FX.accountCurrency(p.kind))) + ' בחודש).</span>';
+      }
+
+      html += '<br><span class="muted">זה שינוי בשווי הנכס, לא כסף שנכנס — '
+        + 'הוא לא נספר כהכנסה של החודש.</span>';
+      return html + balancesLine();
+    },
+
     /* ---------- מטבע ושער הדולר ---------- */
     fxRate() {
       const i = FX.info();
@@ -947,14 +1132,37 @@ window.Engine = (function () {
       html += '<hr>סה"כ הוראות קבע: ' + b(M(total)) + ' בחודש'
         + (income ? ' — ' + U.pct(total, income) + '% מההכנסה' : '') + '.';
 
+      // אם עוד נשאל מאיפה זה יורד, אין לרשום את החיוב עכשיו — אחרת
+      // הוא ייזקף לעו"ש וייאלץ לעבור מקום מיד אחר כך
+      const willAskSource = !existed && Store.get().cards.length
+        && !p.cardName && !p.fromAccount;
+
       if (posted) {
         html += '<br>החיוב של החודש כבר נרשם.';
-      } else if (so.day <= U.dayOfMonth()) {
+      } else if (so.day <= U.dayOfMonth() && !willAskSource) {
         html += '<br>התאריך כבר עבר החודש — ארשום את החיוב עכשיו.';
         const list = Store.postDueStandingOrders();
         if (list.length) html += ' ✅ נרשמו ' + list.length + ' חיובים.';
-      } else {
+      } else if (so.day > U.dayOfMonth()) {
         html += '<br>יירד בעוד ' + b(so.day - U.dayOfMonth()) + ' ימים.';
+      }
+
+      // הכרטיס צוין כבר בשורה — אין מה לשאול
+      const namedCard = p.cardName ? Store.findCard(p.cardName) : null;
+      if (namedCard || p.fromAccount) {
+        Store.setStandingSource(so.id, namedCard ? 'card' : 'checking', namedCard ? namedCard.id : null);
+        return html + '<hr>' + (namedCard
+          ? '💳 יירד דרך <b>' + U.esc(namedCard.name) + '</b> — ' + kindLabel(namedCard)
+          : '🏛️ יירד ישירות מהעו"ש.');
+      }
+
+      // מאיפה זה יורד — משנה אם זה נוגע בעו"ש עכשיו או נכנס לחיוב האשראי
+      if (!existed && Store.get().cards.length) {
+        Store.get().pendingAsk = { type: 'standingSource', soId: so.id };
+        Store.save();
+        return html + '<hr><b>מאיפה זה יורד?</b>' + standingSourceOptions()
+          + '<br><span class="muted">אם זה מהאשראי, החיוב ייכנס לחיוב החודשי של הכרטיס '
+          + 'ולא יירד מהעו"ש בנפרד.</span>';
       }
 
       const plan = Store.monthlyPlan();
@@ -1630,6 +1838,10 @@ window.Engine = (function () {
         + '<li>הוראות קבע <span class="muted">— לראות את כולן</span></li>'
         + '<li>תמחק הוראת קבע ארנונה</li>'
         + '<li>ויזה חיוב ב-2 לחודש <span class="muted">— לשנות מתי האשראי יורד</span></li></ul>'
+        + '<b>תשואה וריבית</b><ul>'
+        + '<li>המניות עלו ב-8.5 אחוז</li>'
+        + '<li>החיסכון עלה ב-2%</li>'
+        + '<li>המניות ירדו ב-3%</li></ul>'
         + '<b>דולרים והמרה</b><ul>'
         + '<li>אני רוצה שהמניות יהיו בדולרים</li>'
         + '<li>כמה זה 500 דולר</li>'

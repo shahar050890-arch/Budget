@@ -723,7 +723,7 @@ const bills = Store.upcomingBills();
 check('חיוב צפוי מופיע', bills.length === 1 && bills[0].amount === 700, JSON.stringify(bills.map(x => x.amount)));
 check('החיוב משויך לכרטיס הנכון', bills[0].card.name === 'ויזה');
 
-Engine.handle('הוראת קבע ארנונה 400 ב-15 לחודש');
+Engine.handle('הוראת קבע ארנונה 400 ב-15 לחודש מהחשבון');
 ans = Engine.handle('מה המצב?');
 check('הדוח מציג חיובים צפויים', /חיובי אשראי צפויים/.test(ans), ans.slice(0, 100));
 check('הדוח מציג הוראות קבע', /הוראות קבע/.test(ans), ans.slice(0, 400));
@@ -1066,6 +1066,124 @@ check('חיוב הוראת הקבע נמחק', !Store.standingPosted(soId));
 check('לא יירשם שוב אוטומטית',
   Store.postDueStandingOrders().length === 0,
   JSON.stringify(Store.get().standing[0].skipMonths));
+
+console.log('\n== מקור התשלום של הוראת קבע ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+Engine.handle('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב-10');
+Engine.handle('כרטיס מקס דביט מסגרת 5000');
+
+ans = Engine.handle('הוראת קבע נטפליקס 45 ב-1 לחודש');
+check('שואל מאיפה יורד', /מאיפה זה יורד/.test(ans), ans.slice(0, 160));
+check('מציג את הכרטיסים ואת החשבון',
+  /ויזה/.test(ans) && /מקס/.test(ans) && /מהחשבון/.test(ans));
+check('נשמרה שאלה פתוחה',
+  Store.get().pendingAsk && Store.get().pendingAsk.type === 'standingSource');
+
+// החיוב נרשם רק אחרי שידוע מאיפה הוא יורד
+const chkPre3 = Store.get().balances.checking;
+check('לא נרשם לפני התשובה', Store.categorySpent('נטפליקס') === 0, Store.categorySpent('נטפליקס'));
+
+ans = Engine.handle('ויזה');
+const nfl = Store.findStandingOrder('נטפליקס');
+check('מקור התשלום נשמר', nfl.cardId === Store.findCard('ויזה').id, JSON.stringify(nfl));
+check('התשובה מסבירה על הקרדיט', /ייצבר לחיוב/.test(ans), ans.slice(0, 250));
+check('חיוב הקבע לא ירד מהעו"ש',
+  Store.get().balances.checking === chkPre3, Store.get().balances.checking);
+check('נצבר לחוב הפתוח של הכרטיס',
+  Store.cardOutstanding(Store.findCard('ויזה').id) === 45,
+  Store.cardOutstanding(Store.findCard('ויזה').id));
+check('עדיין נספר כהוצאה של החודש', Store.categorySpent('נטפליקס') === 45);
+
+// הוראה שיורדת ישירות מהחשבון
+Engine.handle('הוראת קבע ארנונה 400 ב-1 לחודש');
+const chkPre4 = Store.get().balances.checking;
+Engine.handle('מהחשבון');
+const arn = Store.findStandingOrder('ארנונה');
+check('חשבון ישיר נשמר', arn.cardId === null && arn.source === 'checking', JSON.stringify(arn));
+check('ירד מהעו"ש', Store.get().balances.checking === chkPre4 - 400, Store.get().balances.checking);
+
+// ציון הכרטיס כבר בשורה
+ans = Engine.handle('הוראת קבע ספוטיפיי 20 ב-3 לחודש במקס');
+check('כרטיס בשורה — בלי שאלה', !/מאיפה זה יורד/.test(ans), ans.slice(0, 160));
+check('שויך למקס',
+  Store.findStandingOrder('ספוטיפיי').cardId === Store.findCard('מקס').id);
+check('השם נקי משם הכרטיס',
+  Store.findStandingOrder('ספוטיפיי').name === 'ספוטיפיי',
+  Store.findStandingOrder('ספוטיפיי').name);
+
+check('רק חלק מההוראות יורד מהחשבון',
+  Store.standingFromAccount() < Store.standingTotal(),
+  Store.standingFromAccount() + '/' + Store.standingTotal());
+
+console.log('\n== עלייה וירידה בערך ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי במניות 20000');
+Engine.handle('יש לי בחיסכון 10000');
+
+r = p('המניות עלו ב-8.5 אחוז');
+check('זיהוי עלייה', r.intent === 'growth' && r.kind === 'stocks' && r.pct === 8.5, JSON.stringify(r));
+
+r = p('המניות ירדו ב-3%');
+check('זיהוי ירידה', r.intent === 'growth' && r.pct === -3, JSON.stringify(r));
+
+r = p('החיסכון עלה ב-2 אחוז');
+check('ריבית על חיסכון', r.intent === 'growth' && r.kind === 'savings' && r.pct === 2, JSON.stringify(r));
+
+r = p('10 אחוז למניות');
+check('הפרשה לא מתבלבלת עם תשואה', r.intent === 'allocation', JSON.stringify(r));
+
+const assetsPre = Store.totalAssets();
+ans = Engine.handle('המניות עלו ב-8.5 אחוז');
+check('היתרה עלתה', Store.get().balances.stocks === 21700, Store.get().balances.stocks);
+check('התשובה מציגה את הרווח', /1,700/.test(ans), ans.slice(0, 200));
+check('הנכסים גדלו בהתאם', Store.totalAssets() === assetsPre + 1700, Store.totalAssets());
+check('לא נספר כהכנסה', Store.monthIncome() === 12000, Store.monthIncome());
+check('לא נספר כהוצאה', Store.monthExpense() === 0, Store.monthExpense());
+
+Engine.handle('המניות ירדו ב-10 אחוז');
+check('ירידה מקטינה', Store.get().balances.stocks === 19530, Store.get().balances.stocks);
+
+Engine.handle('החיסכון עלה ב-2 אחוז');
+check('ריבית על החיסכון', Store.get().balances.savings === 10200, Store.get().balances.savings);
+
+Engine.handle('בטל');
+check('אפשר לבטל שינוי ערך', Store.get().balances.savings === 10000, Store.get().balances.savings);
+
+freshState();
+ans = Engine.handle('המניות עלו ב-5 אחוז');
+check('בלי סכום התחלתי מבקש אותו', /אין לי סכום התחלתי/.test(ans), ans.slice(0, 120));
+
+console.log('\n== שינוי משכורת מחשב הכול מחדש ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+Engine.handle('10% לחיסכון');
+Engine.handle('5% למניות');
+check('הפרשות לפי אחוז', Store.allocAmount('savings') === 1200 && Store.allocAmount('stocks') === 600,
+  Store.allocAmount('savings') + '/' + Store.allocAmount('stocks'));
+
+const freePre = Store.monthlyPlan().free;
+ans = Engine.handle('המשכורת שלי 15000');
+check('המשכורת התעדכנה', Store.get().profile.salary === 15000);
+check('התשובה מציגה את השינוי', /12,000/.test(ans) && /15,000/.test(ans), ans.slice(0, 200));
+check('ההפרשות באחוזים חושבו מחדש',
+  Store.allocAmount('savings') === 1500 && Store.allocAmount('stocks') === 750,
+  Store.allocAmount('savings') + '/' + Store.allocAmount('stocks'));
+check('התשובה מציגה את עדכון ההפרשות', /1,200/.test(ans) && /1,500/.test(ans), ans.slice(0, 500));
+check('הפנוי חושב מחדש', Store.monthlyPlan().free > freePre, Store.monthlyPlan().free);
+check('התשובה מציגה את הפנוי החדש', /פנוי החודש/.test(ans));
+check('התשובה מציגה שיעור חיסכון', /שיעור החיסכון/.test(ans));
+
+// הפרשה בסכום קבוע לא זזה — והמשתמש מקבל על כך הודעה
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('להפריש 1000 לחיסכון');
+ans = Engine.handle('המשכורת שלי 15000');
+check('סכום קבוע לא משתנה', Store.allocAmount('savings') === 1000);
+check('מסביר שסכום קבוע לא זז', /בסכום קבוע/.test(ans), ans.slice(0, 500));
 
 console.log('\n== סיכום סופי ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');
