@@ -26,6 +26,10 @@ window.Engine = (function () {
       const answered = answerCard(raw);
       if (answered) return answered;
     }
+    if (s.pendingAsk && s.pendingAsk.type === 'payment') {
+      const answered = answerPayment(raw);
+      if (answered) return answered;
+    }
 
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
@@ -100,6 +104,77 @@ window.Engine = (function () {
     if (!known) html += '<br><span class="muted">פתחתי קטגוריה חדשה בשם הזה.</span>';
     html += limitWarning(name);
     return html;
+  }
+
+  /**
+   * האם צריך לשאול איך שולם. לא שואלים כשכבר ברור: כרטיס בשם,
+   * מזומן, משיכה מחשבון אחר, הוראת קבע, או כשהמשתמש כיבה את השאלה.
+   */
+  function needsPaymentAsk(p) {
+    const s = Store.get();
+    if (s.settings && s.settings.askPayment === false) return false;
+    if (!s.cards.length) return false;
+    if (p.cardName || p.cardAmbiguous) return false;
+    if (p.method) return p.method === 'ביט' || p.method === 'פייבוקס';  // ביט יורד דרך האשראי
+    if (p.source && p.source !== 'checking') return false;
+    return true;
+  }
+
+  function paymentOptions() {
+    const s = Store.get();
+    return '<ul>'
+      + s.cards.map(c => '<li>💳 <b>' + U.esc(c.name) + '</b> — ' + kindLabel(c) + '</li>').join('')
+      + '<li>💵 <b>מזומן</b></li>'
+      + '<li>🏛️ <b>העברה</b> — ישירות מהעו"ש</li>'
+      + '</ul>';
+  }
+
+  /** תשובה על "איך שילמת?" */
+  function answerPayment(raw) {
+    const s = Store.get();
+    const text = Parser.normalize(raw);
+    if (Parser.findNumbers(text).length) { s.pendingAsk = null; Store.save(); return null; }
+
+    const txId = s.pendingAsk.txId;
+    const tx = s.transactions.find(t => t.id === txId);
+    if (!tx) { s.pendingAsk = null; Store.save(); return null; }
+
+    // מזומן
+    if (/^(מזומן|קאש|במזומן|ארנק)/.test(text.trim())) {
+      s.pendingAsk = null;
+      Store.setTxSource(txId, 'cash');
+      Store.save();
+      return '<span class="m-title">💵 שילמת במזומן</span>'
+        + M(tx.amount) + ' ירדו מהמזומן.'
+        + (s.declared.cash ? '<br>נשאר במזומן: ' + b(M(s.balances.cash)) : '')
+        + balancesLine();
+    }
+
+    // העברה ישירה מהעו"ש
+    if (/^(העברה|עו"ש|עוש|מהחשבון|בנק|העברה בנקאית|חשבון)/.test(text.trim())) {
+      s.pendingAsk = null;
+      Store.setTxSource(txId, 'checking');
+      Store.save();
+      return '<span class="m-title">🏛️ ירד מהעו"ש</span>'
+        + M(tx.amount) + ' ירדו ישירות מהחשבון.' + balancesLine();
+    }
+
+    // כרטיס
+    const card = Store.findCard(Parser.detectCardName(text) || Parser.tidyThing(text));
+    if (card) {
+      s.pendingAsk = null;
+      Store.setTxCard(txId, card.id);
+      Store.save();
+      let html = '<span class="m-title">💳 ' + U.esc(card.name) + '</span>'
+        + M(tx.amount) + ' <span class="tag">' + kindLabel(card) + '</span>'
+        + '<hr>' + (card.kind === 'debit'
+          ? '⚡ ירד מהעו"ש מיד.'
+          : '🕐 ייגבה בחיוב של ' + card.billingDay + ' לחודש.');
+      html += cardWarning(card);
+      return html + balancesLine();
+    }
+
+    return '<span class="m-title">🤔 לא זיהיתי</span>איך שילמת?' + paymentOptions();
   }
 
   function kindLabel(c) {
@@ -199,10 +274,9 @@ window.Engine = (function () {
   function balancesLine() {
     const s = Store.get();
     if (!Store.hasBalances()) return '';
-    const parts = [];
-    if (s.declared.checking) parts.push('🏛️ ' + M(s.balances.checking));
-    if (s.declared.savings) parts.push('🐖 ' + M(s.balances.savings));
-    if (s.declared.stocks) parts.push('📈 ' + M(s.balances.stocks));
+    const ICONS = { checking: '🏛️', cash: '💵', savings: '🐖', stocks: '📈' };
+    const parts = Store.ACCOUNT_KINDS.filter(k => s.declared[k])
+      .map(k => ICONS[k] + ' ' + FX.money(s.balances[k], FX.accountCurrency(k)));
     return '<hr><span class="muted">היתרות שלך: ' + parts.join(' · ') + '</span>';
   }
 
@@ -241,10 +315,17 @@ window.Engine = (function () {
     const debt = Store.totalDebt();
     const net = Store.netWorth();
 
+    const NAMES = {
+      checking: ['🏛️', 'עובר ושב'], cash: ['💵', 'מזומן'],
+      savings: ['🐖', 'חיסכון'], stocks: ['📈', 'מניות']
+    };
     let html = '<ul>'
-      + (s.declared.checking ? '<li>🏛️ עובר ושב: ' + b(M(b_.checking)) + '</li>' : '')
-      + (s.declared.savings ? '<li>🐖 חיסכון: ' + b(M(b_.savings)) + '</li>' : '')
-      + (s.declared.stocks ? '<li>📈 מניות: ' + b(M(b_.stocks)) + '</li>' : '')
+      + Store.ACCOUNT_KINDS.filter(k => s.declared[k]).map(k => {
+        const cur = FX.accountCurrency(k);
+        return '<li>' + NAMES[k][0] + ' ' + NAMES[k][1] + ': ' + b(FX.money(b_[k], cur))
+          + (cur === 'USD' ? ' <span class="muted">(' + U.money(FX.toILS(b_[k], 'USD')) + ')</span>' : '')
+          + '</li>';
+      }).join('')
       + '</ul>'
       + 'סה"כ נכסים: ' + ok(M(Store.totalAssets()));
 
@@ -319,7 +400,10 @@ window.Engine = (function () {
     expense(p) {
       Store.snapshot('הוצאה');
       const card = p.cardName ? Store.findCard(p.cardName) : null;
-      const onCard = !!card || p.cardAmbiguous;
+      // כשעוד לא ידוע איך שולם, התנועה מוחזקת ולא נוגעת ביתרות
+      // עד שתגיע התשובה — אחרת היינו מורידים מהעו"ש ומתקנים אחר כך.
+      const willAsk = needsPaymentAsk(p);
+      const onCard = !!card || p.cardAmbiguous || willAsk;
       const source = onCard ? null : (p.source || 'checking');
       const tx = Store.addTx({
         type: 'expense',
@@ -346,6 +430,14 @@ window.Engine = (function () {
         + (p.eventName ? ' <span class="tag">🎉 ' + U.esc(p.eventName) + '</span>' : '')
         + (source && source !== 'checking' ? ' <span class="tag">' + A[source].icon + ' מה' + A[source].label + '</span>' : '')
         + (tx.date !== U.todayISO() ? ' <span class="tag">' + U.niceDate(tx.date) + '</span>' : '');
+
+      // לא נאמר איך שולם — שואלים (ניתן לכיבוי)
+      if (willAsk) {
+        Store.get().pendingAsk = { type: 'payment', txId: tx.id };
+        Store.save();
+        return html + '<hr><b>איך שילמת?</b>' + paymentOptions()
+          + '<br><span class="muted">לא רוצה שאשאל בכל פעם? כתוב <b>אל תשאל על כל הוצאה</b>.</span>';
+      }
 
       // שילם בכרטיס בלי לומר באיזה, ויש יותר מאחד — שואלים
       if (p.cardAmbiguous) {
@@ -629,6 +721,71 @@ window.Engine = (function () {
       if (plan.free < 0) html += '<br>⚠️ ההפרשה הזו מכניסה אותך למינוס חודשי. שקול סכום נמוך יותר.';
       else if (plan.income) html += '<br>שיעור החיסכון שלך: ' + b(U.pct(Store.totalAllocations() + Store.goalsMonthly(), plan.income) + '%') + ' מההכנסה.';
       return html;
+    },
+
+    /* ---------- הגדרת השאלה על אמצעי תשלום ---------- */
+    askPayment(p) {
+      const s = Store.get();
+      s.settings = s.settings || {};
+      s.settings.askPayment = p.on;
+      Store.save();
+      return p.on
+        ? '<span class="m-title">✅ אשאל בכל הוצאה</span>'
+          + 'מעכשיו אחרי כל הוצאה אשאל איך שילמת — כרטיס, מזומן או העברה.'
+        : '<span class="m-title">👌 לא אשאל יותר</span>'
+          + 'הוצאה בלי ציון אמצעי תשלום תיזקף לעו"ש.'
+          + '<br><span class="muted">אפשר תמיד לציין בעצמך: «קניתי קפה 28 בויזה».</span>'
+          + '<br><span class="muted">להחזיר: «תשאל על כל הוצאה».</span>';
+    },
+
+    /* ---------- מטבע ושער הדולר ---------- */
+    fxRate() {
+      const i = FX.info();
+      let html = '<span class="m-title">💵 שער הדולר</span>'
+        + '<b>1 $ = ' + i.rate.toFixed(3) + ' ₪</b>'
+        + '<hr><span class="muted">' + FX.rateNote() + '</span>';
+      if (!i.known)
+        html += '<br><span class="muted">עוד לא הצלחתי למשוך שער מהרשת. '
+          + 'אפשר להזין ידנית: «הדולר 3.72».</span>';
+      html += '<hr>דוגמאות: 100$ = ' + U.num(FX.toILS(100, 'USD')) + ' ₪ · '
+        + '1,000 ₪ = $' + U.num(FX.fromILS(1000, 'USD'));
+      return html;
+    },
+
+    fxSet(p) {
+      Store.snapshot('שער דולר');
+      FX.setRate(p.rate, true);
+      return '<span class="m-title">💵 השער עודכן ידנית</span>'
+        + '<b>1 $ = ' + p.rate.toFixed(3) + ' ₪</b>'
+        + '<hr><span class="muted">מעכשיו זה השער שאשתמש בו. '
+        + 'לחזרה לשער אוטומטי מהרשת: «תמשוך שער עדכני».</span>';
+    },
+
+    fxConvert(p) {
+      const res = FX.convert(p.amount, p.from, p.to);
+      return '<span class="m-title">🔄 המרה</span>'
+        + '<b>' + FX.money(p.amount, p.from) + ' = ' + FX.money(res, p.to) + '</b>'
+        + '<hr><span class="muted">' + FX.rateNote() + '</span>';
+    },
+
+    setCurrency(p) {
+      Store.snapshot('מטבע');
+      const label = { checking: 'עובר ושב', cash: 'מזומן', savings: 'חיסכון', stocks: 'מניות' };
+
+      if (p.all || !p.kind) {
+        Store.ACCOUNT_KINDS.forEach(k => FX.setAccountCurrency(k, p.code));
+        return '<span class="m-title">💱 כל החשבונות ' + (p.code === 'USD' ? 'בדולרים' : 'בשקלים') + '</span>'
+          + '<span class="muted">ההון הכולל עדיין מחושב בשקלים, לפי ' + FX.rateNote() + '.</span>';
+      }
+
+      FX.setAccountCurrency(p.kind, p.code);
+      const bal = Store.get().balances[p.kind];
+      return '<span class="m-title">💱 ' + label[p.kind] + ' ' + (p.code === 'USD' ? 'בדולרים' : 'בשקלים') + '</span>'
+        + 'היתרה כעת: <b>' + FX.money(bal, p.code) + '</b>'
+        + (p.code === 'USD' ? ' = ' + U.money(FX.toILS(bal, 'USD')) : '')
+        + '<hr><span class="muted">הסכום עצמו לא הומר — רק המטבע שבו הוא מוצג ונספר. '
+        + 'אם הוא היה רשום בשקלים, עדכן אותו: «יש לי ב' + label[p.kind] + ' <סכום> דולר».</span>'
+        + '<br><span class="muted">' + FX.rateNote() + '</span>';
     },
 
     /* ---------- הוראות קבע ---------- */
@@ -1022,17 +1179,23 @@ window.Engine = (function () {
     /* ---------- יתרות בפועל ---------- */
     balance(p) {
       Store.snapshot('יתרה');
+      if (p.currency) FX.setAccountCurrency(p.kind, p.currency);
       Store.setBalance(p.kind, p.amount);
-      const LABEL = { checking: ['🏛️', 'עובר ושב'], savings: ['🐖', 'חיסכון'], stocks: ['📈', 'תיק המניות'] };
+      const LABEL = {
+        checking: ['🏛️', 'עובר ושב'], cash: ['💵', 'מזומן'],
+        savings: ['🐖', 'חיסכון'], stocks: ['📈', 'תיק המניות']
+      };
       const [ico, label] = LABEL[p.kind];
       const s = Store.get();
 
+      const cur = FX.accountCurrency(p.kind);
       let html = '<span class="m-title">' + ico + ' עודכנה היתרה</span>'
-        + label + ': ' + b(M(p.amount));
+        + label + ': ' + b(FX.money(p.amount, cur))
+        + (cur === 'USD' ? ' <span class="muted">(' + U.money(FX.toILS(p.amount, 'USD')) + ')</span>' : '');
 
-      const missing = ['checking', 'savings', 'stocks'].filter(k => !s.declared[k]);
+      const missing = Store.ACCOUNT_KINDS.filter(k => !s.declared[k]);
       if (missing.length) {
-        const names = { checking: 'עובר ושב', savings: 'חיסכון', stocks: 'מניות' };
+        const names = { checking: 'עובר ושב', cash: 'מזומן', savings: 'חיסכון', stocks: 'מניות' };
         html += '<hr><span class="muted">חסר לי עוד: ' + missing.map(k => names[k]).join(', ')
           + '. כתוב למשל «יש לי בחיסכון 20000».</span>';
       } else {
@@ -1055,12 +1218,18 @@ window.Engine = (function () {
 
     balanceQuery(p) {
       const s = Store.get();
-      const LABEL = { checking: ['🏛️', 'עובר ושב'], savings: ['🐖', 'חיסכון'], stocks: ['📈', 'תיק המניות'] };
+      const LABEL = {
+        checking: ['🏛️', 'עובר ושב'], cash: ['💵', 'מזומן'],
+        savings: ['🐖', 'חיסכון'], stocks: ['📈', 'תיק המניות']
+      };
       const [ico, label] = LABEL[p.kind];
       if (!s.declared[p.kind])
         return '<span class="m-title">🤷 אין לי את הנתון הזה</span>כתוב לי «יש לי ב' + label + ' 5000».';
 
-      let html = '<span class="m-title">' + ico + ' ' + label + '</span>' + b(M(s.balances[p.kind]));
+      const cur2 = FX.accountCurrency(p.kind);
+      let html = '<span class="m-title">' + ico + ' ' + label + '</span>'
+        + b(FX.money(s.balances[p.kind], cur2))
+        + (cur2 === 'USD' ? ' <span class="muted">= ' + U.money(FX.toILS(s.balances[p.kind], 'USD')) + '</span>' : '');
       html += accountDetail(p.kind);
       return html;
     },
@@ -1297,7 +1466,7 @@ window.Engine = (function () {
         + '<li>המשכורת שלי 12000</li>'
         + '<li>קיבלתי בונוס 3000</li></ul>'
         + '<b>הוצאות</b><ul>'
-        + '<li>קניתי קפה 28</li>'
+        + '<li>קניתי קפה 28 <span class="muted">— או «חמישים שקל» במילים</span></li>'
         + '<li>שילמתי 350 בסופר בויזה</li>'
         + '<li>אתמול דלק 300</li></ul>'
         + '<b>אשראי וחובות</b><ul>'
@@ -1316,8 +1485,14 @@ window.Engine = (function () {
         + '<li>הוראות קבע <span class="muted">— לראות את כולן</span></li>'
         + '<li>תמחק הוראת קבע ארנונה</li>'
         + '<li>ויזה חיוב ב-2 לחודש <span class="muted">— לשנות מתי האשראי יורד</span></li></ul>'
+        + '<b>דולרים והמרה</b><ul>'
+        + '<li>אני רוצה שהמניות יהיו בדולרים</li>'
+        + '<li>כמה זה 500 דולר</li>'
+        + '<li>מה שער הדולר?</li>'
+        + '<li>הדולר 3.72 <span class="muted">— שער ידני</span></li></ul>'
         + '<b>כמה כסף יש לי</b><ul>'
         + '<li>יש לי בעובר ושב 8000</li>'
+        + '<li>יש לי במזומן 500</li>'
         + '<li>יש לי בחיסכון 20000</li>'
         + '<li>יש לי במניות 15000</li>'
         + '<li>כמה ההון שלי?</li></ul>'

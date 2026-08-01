@@ -6,7 +6,9 @@ window.Store = (function () {
   const EMPTY = {
     version: 1,
     profile: { salary: 0, salaryDay: 10 },
-    balances: { checking: 0, savings: 0, stocks: 0 },  // יתרות בפועל
+    balances: { checking: 0, savings: 0, stocks: 0, cash: 0 },  // יתרות בפועל
+    currencies: { checking: 'ILS', savings: 'ILS', stocks: 'ILS', cash: 'ILS' },
+    fx: {},             // {usdIls, at, manual}
     declared: {},       // אילו יתרות המשתמש הגדיר בפועל {checking:true,...}
     transactions: [],   // {id,type:'expense'|'income',amount,category,note,date,cardId,goalId,toSavings,toStocks}
     cards: [],          // {id,name,limit,billingDay,kind:'credit'|'debit'}
@@ -218,11 +220,16 @@ window.Store = (function () {
     const standing = mKey === U.currentMonth() ? standingRemaining() : 0;
     const committed = debts + savings + stocks + goals + standing;
     const free = income - spent - committed;
-    const daysLeft = mKey === U.currentMonth() ? U.daysLeftInMonth() : 0;
+    // האופק הנכון הוא עד המשכורת הבאה, לא עד סוף החודש הקלנדרי
+    const toSalary = daysToSalary();
+    const daysLeft = mKey === U.currentMonth()
+      ? (toSalary != null && toSalary > 0 ? toSalary : U.daysLeftInMonth())
+      : 0;
 
     return {
       month: mKey, income, spent, debts, savings, stocks, goals, standing, committed, free,
       daysLeft,
+      paceHorizon: toSalary != null && toSalary > 0 ? 'salary' : 'month',
       dailyPace: daysLeft > 0 ? Math.floor(free / daysLeft) : free,
       spentPct: U.pct(spent, income || 1)
     };
@@ -414,7 +421,7 @@ window.Store = (function () {
    * מרוכז במקום אחד כדי שהחלה, ביטול וסיכום תנועה חודשית לא ייפרדו.
    */
   function balanceDelta(t) {
-    const d = { checking: 0, savings: 0, stocks: 0 };
+    const d = { checking: 0, savings: 0, stocks: 0, cash: 0 };
 
     if (t.type === 'transfer') { d[t.from] -= t.amount; d[t.to] += t.amount; return d; }
     // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
@@ -438,9 +445,7 @@ window.Store = (function () {
 
   function applyBalance(t, dir) {
     const d = balanceDelta(t);
-    state.balances.checking += dir * d.checking;
-    state.balances.savings += dir * d.savings;
-    state.balances.stocks += dir * d.stocks;
+    Object.keys(d).forEach(k => { state.balances[k] = (state.balances[k] || 0) + dir * d[k]; });
   }
 
   /** התנועה נטו בחשבון במהלך החודש — כמה נכנס וכמה יצא */
@@ -724,6 +729,20 @@ window.Store = (function () {
     return t;
   }
 
+  /** שיוך תנועה לחשבון מקור אחרי שנרשמה (למשל אחרי "שילמתי במזומן") */
+  function setTxSource(txId, source) {
+    const t = state.transactions.find(x => x.id === txId);
+    if (!t) return null;
+    applyBalance(t, -1);
+    t.source = source;
+    t.cardId = null;
+    t.onCard = null;
+    t.debit = null;
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
   function removeCustomCategory(name) {
     const had = state.customCategories.some(c => c.name === name);
     state.customCategories = state.customCategories.filter(c => c.name !== name);
@@ -733,6 +752,8 @@ window.Store = (function () {
   }
 
   /* ---------- יתרות והון ---------- */
+
+  const ACCOUNT_KINDS = ['checking', 'cash', 'savings', 'stocks'];
 
   function setBalance(kind, amount) {
     state.balances[kind] = amount;
@@ -749,9 +770,13 @@ window.Store = (function () {
     return state.cards.reduce((s, c) => s + cardOutstanding(c.id), 0);
   }
 
+  /** יתרה מומרת לשקל, לפי המטבע של אותו חשבון */
+  function balanceILS(kind) {
+    return FX.toILS(state.balances[kind] || 0, FX.accountCurrency(kind));
+  }
+
   function totalAssets() {
-    const b = state.balances;
-    return b.checking + b.savings + b.stocks;
+    return ACCOUNT_KINDS.reduce((s, k) => s + balanceILS(k), 0);
   }
 
   /** הון נקי = נכסים − חובות − חיובי אשראי שטרם ירדו */
@@ -759,9 +784,31 @@ window.Store = (function () {
     return totalAssets() - totalDebt() - pendingCardCharges();
   }
 
-  /** כמה זמין באמת להוצאה עכשיו: עו"ש פחות מה שכבר מיועד */
+  /** כמה זמין באמת להוצאה עכשיו: עו"ש ומזומן פחות מה שכבר מיועד */
   function liquidNow() {
-    return state.balances.checking - pendingCardCharges();
+    return balanceILS('checking') + balanceILS('cash')
+      - pendingCardCharges() - standingRemaining();
+  }
+
+  /* ---------- מועד המשכורת ---------- */
+
+  function salaryDay() { return state.profile.salaryDay || null; }
+
+  /** תאריך המשכורת הבאה */
+  function nextSalaryDate() {
+    const day = salaryDay();
+    if (!day) return null;
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), day);
+    if (d < new Date(U.todayISO())) d.setMonth(d.getMonth() + 1);
+    return U.toISO(d);
+  }
+
+  /** כמה ימים עד המשכורת הבאה — האופק האמיתי לקצב היומי */
+  function daysToSalary() {
+    const iso = nextSalaryDate();
+    if (!iso) return null;
+    return Math.max(0, Math.round((new Date(iso) - new Date(U.todayISO())) / 86400000));
   }
 
   function findCard(name) {
@@ -888,14 +935,15 @@ window.Store = (function () {
     goalDeposited, goalRemainingThisMonth, goalStatus,
     monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
     addTx, removeTx,
-    setBalance, hasBalances, accountMovement, balanceDelta, pendingCardCharges, totalAssets, netWorth, liquidNow,
+    setBalance, hasBalances, accountMovement, balanceDelta, pendingCardCharges,
+    ACCOUNT_KINDS, balanceILS, salaryDay, nextSalaryDate, daysToSalary, totalAssets, netWorth, liquidNow,
     savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
     findCard, upsertCard, removeCard, creditCards, debitCards, hasBothCardKinds,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,
     setLimit, setAllocation, pushChat, addCustomCategory, removeCustomCategory,
     addEvent, findEvent, openEvents, eventTx, eventTotal, eventStatus, closeEvent, removeEvent,
-    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard,
+    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard, setTxSource,
     addStandingOrder, findStandingOrder, activeStandingOrders, removeStandingOrder,
     standingPosted, dueStandingOrders, upcomingStandingOrders, standingRemaining,
     standingTotal, postDueStandingOrders,

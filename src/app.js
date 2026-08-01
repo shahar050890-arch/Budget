@@ -277,6 +277,11 @@
       s.profile.salary ? 'פנוי החודש: ' + U.money(plan.free) : 'כותבים בצ\'אט — הכל מסתדר לבד';
   }
 
+  // שער הדולר נמשך ברקע; אם אין רשת נשארים עם השער השמור
+  FX.refresh().then(() => {
+    if (Store.ACCOUNT_KINDS.some(k => FX.accountCurrency(k) === 'USD')) Render.all();
+  }).catch(() => {});
+
   init();
 
   // עדכון הכותרת אחרי כל פעולה
