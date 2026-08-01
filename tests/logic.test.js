@@ -974,6 +974,99 @@ check('ירד ישירות מהעו"ש', Store.get().balances.checking === pchk1
 Engine.handle('תשאל על כל הוצאה');
 check('אפשר להחזיר', Store.get().settings.askPayment === true);
 
+console.log('\n== מחיקת הוצאות ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+
+r = p('תמחק את ההוצאה האחרונה');
+check('מחיקת האחרונה', r.intent === 'deleteExpense' && r.last === true, JSON.stringify(r));
+
+r = p('תמחק את ההוצאה הזאת');
+check('"הזאת" גם עובד', r.intent === 'deleteExpense' && r.last === true, JSON.stringify(r));
+
+r = p('תמחק את ההוצאה של 250');
+check('מחיקה לפי סכום', r.intent === 'deleteExpense' && r.amount === 250, JSON.stringify(r));
+
+r = p('לא הוצאתי בסוף על הקפה');
+check('ניסוח טבעי', r.intent === 'deleteExpense', JSON.stringify(r));
+
+Engine.handle('קניתי קפה 28');
+Engine.handle('שילמתי 250 על דלק');
+const delChk = Store.get().balances.checking;
+const delSpent = Store.monthExpense();
+
+ans = Engine.handle('תמחק את ההוצאה האחרונה');
+check('נמחקה האחרונה', /נמחקה/.test(ans) && /250/.test(ans), ans.slice(0, 120));
+check('הכסף חזר לעו"ש', Store.get().balances.checking === delChk + 250, Store.get().balances.checking);
+check('ההוצאה ירדה מהסכום החודשי', Store.monthExpense() === delSpent - 250, Store.monthExpense());
+check('התנועה נעלמה', !Store.get().transactions.some(t => t.amount === 250));
+
+// מחיקה לפי טקסט
+Engine.handle('שילמתי 90 על חניה');
+ans = Engine.handle('תמחק את החניה');
+check('מחיקה לפי תיאור', /נמחקה/.test(ans) && /90/.test(ans), ans.slice(0, 140));
+check('נמחקה בפועל', !Store.get().transactions.some(t => t.amount === 90));
+
+// כמה מועמדים — שואל
+Engine.handle('קניתי לחם 40');
+Engine.handle('קניתי חלב 40');
+ans = Engine.handle('תמחק את ההוצאה של 40');
+check('שואל איזו מהן', /מצאתי 2 תנועות/.test(ans), ans.slice(0, 140));
+check('נשמרה שאלה פתוחה', Store.get().pendingAsk && Store.get().pendingAsk.type === 'deleteChoice');
+
+const delCnt = Store.get().transactions.length;
+ans = Engine.handle('1');
+check('בחירה לפי מספר', /נמחקה/.test(ans), ans.slice(0, 100));
+check('רק אחת נמחקה', Store.get().transactions.length === delCnt - 1, Store.get().transactions.length);
+check('השאלה נסגרה', !Store.get().pendingAsk);
+
+// מחיקת הכל
+Engine.handle('קניתי משהו 77');
+Engine.handle('קניתי עוד משהו 77');
+Engine.handle('תמחק את ההוצאה של 77');
+ans = Engine.handle('הכל');
+check('מחיקת כל המועמדים', /נמחקו 2/.test(ans), ans.slice(0, 100));
+check('שתיהן נעלמו', !Store.get().transactions.some(t => t.amount === 77));
+
+// ביטול הבחירה
+Engine.handle('קניתי א 55');
+Engine.handle('קניתי ב 55');
+Engine.handle('תמחק את ההוצאה של 55');
+ans = Engine.handle('בטל');
+check('אפשר לוותר על המחיקה', /לא מחקתי/.test(ans), ans.slice(0, 80));
+check('שתיהן נשארו',
+  Store.get().transactions.filter(t => t.amount === 55).length === 2);
+
+console.log('\n== מחיקה מבטלת גם את התוצרים ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+Engine.handle('יש לי בחיסכון 5000');
+Engine.handle('לחסוך לרכב 12000 ב-6 חודשים');
+Engine.handle('הפקדתי 2000 לרכב');
+check('היעד התקדם', Store.get().goals[0].saved === 2000);
+Engine.handle('תמחק את ההוצאה האחרונה');
+check('הנצבר ביעד חזר', Store.get().goals[0].saved === 0, Store.get().goals[0].saved);
+check('החיסכון חזר', Store.get().balances.savings === 5000, Store.get().balances.savings);
+
+Engine.handle('יש לי הלוואה 20000 החזר 800 בחודש');
+Engine.handle('שילמתי 800 על ההלוואה');
+check('החוב קטן', Store.totalDebt() === 19200, Store.totalDebt());
+Engine.handle('תמחק את ההוצאה האחרונה');
+check('החוב חזר לגובהו', Store.totalDebt() === 20000, Store.totalDebt());
+
+Engine.handle('הוראת קבע ארנונה 400 ב-1 לחודש');
+Store.postDueStandingOrders();
+const soId = Store.get().standing[0].id;
+check('הוראת הקבע נרשמה', Store.standingPosted(soId));
+const soTx = Store.get().transactions.find(t => t.standingId === soId);
+Engine.handle('תמחק את ההוצאה של 400');
+check('חיוב הוראת הקבע נמחק', !Store.standingPosted(soId));
+check('לא יירשם שוב אוטומטית',
+  Store.postDueStandingOrders().length === 0,
+  JSON.stringify(Store.get().standing[0].skipMonths));
+
 console.log('\n== סיכום סופי ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');
 process.exit(fail ? 1 : 0);

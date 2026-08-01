@@ -525,6 +525,60 @@ window.Store = (function () {
     return t;
   }
 
+  /**
+   * מחיקה מלאה של תנועה — כולל כל מה שהיא גררה.
+   * לא מספיק להחזיר את היתרה: הפקדה ליעד הגדילה את הנצבר, תשלום חוב
+   * הקטין את היתרה, והוראת קבע נחשבת "ירדה החודש" ותירשם שוב מחר.
+   */
+  function deleteTx(id) {
+    const t = state.transactions.find(x => x.id === id);
+    if (!t) return null;
+
+    if (t.goalId) {
+      const g = state.goals.find(x => x.id === t.goalId);
+      if (g) { g.saved = Math.max(0, g.saved - t.amount); g.done = g.saved >= g.target; }
+    }
+
+    if (t.debtId) {
+      const d = state.debts.find(x => x.id === t.debtId);
+      if (d) d.amount += t.amount;
+    }
+
+    if (t.standingId) {
+      const o = state.standing.find(x => x.id === t.standingId);
+      // בלי הסימון הזה, הרישום האוטומטי היה מחזיר את החיוב מיד
+      if (o) {
+        o.skipMonths = o.skipMonths || [];
+        const mk = U.monthKey(t.date);
+        if (!o.skipMonths.includes(mk)) o.skipMonths.push(mk);
+      }
+    }
+
+    const removed = removeTx(id);
+    save();
+    return removed;
+  }
+
+  /** חיפוש הוצאות למחיקה: לפי סכום, לפי טקסט, או האחרונות */
+  function findExpenses({ amount, text, limit = 6 } = {}) {
+    let list = state.transactions.filter(t => t.type !== 'transfer');
+
+    if (amount != null) list = list.filter(t => t.amount === amount);
+
+    if (text) {
+      const q = String(text).trim();
+      if (q) {
+        list = list.filter(t =>
+          (t.note && t.note.includes(q)) ||
+          (t.category && t.category.includes(q)) ||
+          (q.includes(t.category)) ||
+          (t.note && q.includes(t.note)));
+      }
+    }
+
+    return list.slice(0, limit);
+  }
+
   /** העברה בין חשבונות — לא הוצאה, רק הזזת כסף */
   function addTransfer(from, to, amount, note) {
     const t = {
@@ -709,7 +763,10 @@ window.Store = (function () {
   /** הוראות קבע שהיום שלהן הגיע ועדיין לא נרשמו */
   function dueStandingOrders() {
     const today = U.dayOfMonth();
-    return activeStandingOrders().filter(o => o.day <= today && !standingPosted(o.id));
+    const mk = U.currentMonth();
+    return activeStandingOrders().filter(o =>
+      o.day <= today && !standingPosted(o.id)
+      && !(o.skipMonths || []).includes(mk));
   }
 
   /** הוראות קבע שעוד לפניהן החודש */
@@ -1036,7 +1093,7 @@ window.Store = (function () {
     allocAmount, totalAllocations, goalsMonthly, activeGoals, goalMonthlyNeed,
     goalDeposited, goalRemainingThisMonth, goalStatus,
     monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
-    addTx, removeTx,
+    addTx, removeTx, deleteTx, findExpenses,
     setBalance, hasBalances, accountMovement, balanceDelta, pendingCardCharges,
     ACCOUNT_KINDS, balanceILS, salaryDay, nextSalaryDate, daysToSalary, totalAssets, netWorth, liquidNow,
     savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
