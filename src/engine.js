@@ -17,9 +17,13 @@ window.Engine = (function () {
     lastInput = String(raw || '');
     turn++;
 
-    // תשובה לשאלה שנשארה פתוחה ("על מה הייתה ההעברה?")
+    // תשובה לשאלה שנשארה פתוחה
     if (s.pendingAsk && s.pendingAsk.type === 'category') {
       const answered = answerCategory(raw);
+      if (answered) return answered;
+    }
+    if (s.pendingAsk && s.pendingAsk.type === 'card') {
+      const answered = answerCard(raw);
       if (answered) return answered;
     }
 
@@ -96,6 +100,39 @@ window.Engine = (function () {
     if (!known) html += '<br><span class="muted">פתחתי קטגוריה חדשה בשם הזה.</span>';
     html += limitWarning(name);
     return html;
+  }
+
+  function kindLabel(c) {
+    return c.kind === 'debit' ? '⚡ דביט' : '🕐 קרדיט';
+  }
+
+  /** המשתמש עונה מאיזה כרטיס שילם — משייך את התנועה ומעדכן יתרות */
+  function answerCard(raw) {
+    const s = Store.get();
+    const text = Parser.normalize(raw);
+    if (Parser.findNumbers(text).length) { s.pendingAsk = null; Store.save(); return null; }
+
+    const txId = s.pendingAsk.txId;
+    const card = Store.findCard(Parser.detectCardName(text) || Parser.tidyThing(text));
+    if (!card) {
+      return '<span class="m-title">🤔 לא זיהיתי את הכרטיס</span>'
+        + 'הכרטיסים שלך: ' + s.cards.map(c => '<b>' + U.esc(c.name) + '</b>').join(', ') + '.'
+        + '<br><span class="muted">תכתוב את השם המדויק, או «לא משנה» כדי להשאיר בלי שיוך.</span>';
+    }
+
+    s.pendingAsk = null;
+    const tx = Store.setTxCard(txId, card.id);
+    if (!tx) { Store.save(); return null; }
+
+    let html = '<span class="m-title">✅ שייכתי לכרטיס</span>'
+      + M(tx.amount) + ' → 💳 <b>' + U.esc(card.name) + '</b> <span class="tag">' + kindLabel(card) + '</span>';
+
+    html += '<hr>' + (card.kind === 'debit'
+      ? '⚡ דביט — הכסף כבר ירד מהעו"ש.'
+      : '🕐 קרדיט — ייגבה בחיוב של ' + card.billingDay + ' לחודש הבא.');
+
+    html += cardWarning(card);
+    return html + balancesLine();
   }
 
   /** שורת יתרות מצטברת — מוצגת אחרי כל תנועה */
@@ -222,7 +259,8 @@ window.Engine = (function () {
     expense(p) {
       Store.snapshot('הוצאה');
       const card = p.cardName ? Store.findCard(p.cardName) : null;
-      const source = card ? null : (p.source || 'checking');
+      const onCard = !!card || p.cardAmbiguous;
+      const source = onCard ? null : (p.source || 'checking');
       const tx = Store.addTx({
         type: 'expense',
         amount: p.amount,
@@ -232,7 +270,9 @@ window.Engine = (function () {
         source: source,
         method: p.method || null,
         eventId: p.eventId || null,
-        cardId: card ? card.id : null
+        cardId: card ? card.id : null,
+        onCard: onCard || null,
+        debit: card ? card.kind === 'debit' : null
       });
 
       const A = Parser.ACCOUNTS;
@@ -246,6 +286,17 @@ window.Engine = (function () {
         + (p.eventName ? ' <span class="tag">🎉 ' + U.esc(p.eventName) + '</span>' : '')
         + (source && source !== 'checking' ? ' <span class="tag">' + A[source].icon + ' מה' + A[source].label + '</span>' : '')
         + (tx.date !== U.todayISO() ? ' <span class="tag">' + U.niceDate(tx.date) + '</span>' : '');
+
+      // שילם בכרטיס בלי לומר באיזה, ויש יותר מאחד — שואלים
+      if (p.cardAmbiguous) {
+        Store.get().pendingAsk = { type: 'card', txId: tx.id };
+        Store.save();
+        return html + '<hr><b>מאיזה כרטיס שילמת?</b><ul>'
+          + Store.get().cards.map(c =>
+            '<li><b>' + U.esc(c.name) + '</b> — ' + kindLabel(c)
+            + (c.kind === 'debit' ? ' (יורד מיד)' : ' (ייגבה ב-' + c.billingDay + ' לחודש)') + '</li>').join('')
+          + '</ul><span class="muted">תכתוב את שם הכרטיס ואשייך אותו.</span>';
+      }
 
       // העברה בביט/פייבוקס בלי הקשר — שואלים על מה, ומחכים לתשובה
       if (p.needsCategory) {
@@ -274,6 +325,12 @@ window.Engine = (function () {
           const goals = Store.activeGoals();
           if (goals.length) html += '<br><span class="muted">שים לב שזה אותו כסף שמיועד ל' + U.esc(goals[0].name) + '.</span>';
         }
+      }
+
+      if (card) {
+        html += '<hr>' + (card.kind === 'debit'
+          ? '⚡ דביט — הכסף ירד מהעו"ש מיד.'
+          : '🕐 קרדיט — זה לא ירד עכשיו. ייגבה בחיוב של ' + card.billingDay + ' לחודש הבא.');
       }
 
       html += '<hr>' + reaction(tx.amount) + afterExpenseAdvice(plan);
@@ -323,13 +380,22 @@ window.Engine = (function () {
     card(p) {
       Store.snapshot('כרטיס');
       const existed = !!Store.findCard(p.name);
-      const c = Store.upsertCard(p.name, p.limit, p.billingDay);
+      const c = Store.upsertCard(p.name, p.limit, p.billingDay, p.kind);
       const s = Store.get();
       const totalLimit = Store.totalCardLimit();
 
       let html = '<span class="m-title">💳 ' + (existed ? 'הכרטיס עודכן' : 'כרטיס נוסף') + '</span>'
-        + U.esc(c.name) + ' · מסגרת ' + b(M(c.limit))
-        + (c.billingDay ? ' · חיוב ב־' + c.billingDay + ' לחודש' : '');
+        + U.esc(c.name) + ' <span class="tag">' + kindLabel(c) + '</span>'
+        + (c.limit ? ' · מסגרת ' + b(M(c.limit)) : '')
+        + (c.kind !== 'debit' && c.billingDay ? ' · חיוב ב־' + c.billingDay + ' לחודש' : '');
+
+      html += '<hr>' + (c.kind === 'debit'
+        ? '⚡ <b>דביט</b> — כל קנייה יורדת מהעו"ש מיד, באותו חודש.'
+        : '🕐 <b>קרדיט</b> — הקניות נצברות כחוב פתוח ויורדות בחיוב המרוכז בחודש הבא.');
+
+      if (!p.kind && !existed) {
+        html += '<br><span class="muted">הנחתי קרדיט. אם זה דביט, כתוב «' + U.esc(c.name) + ' דביט».</span>';
+      }
 
       html += '<hr>סה"כ מסגרות: ' + b(M(totalLimit)) + ' על פני ' + s.cards.length + ' כרטיסים.';
       const salary = Store.monthIncome();
@@ -604,7 +670,11 @@ window.Engine = (function () {
         return '<span class="m-title">אין כרטיסים רשומים</span>'
           + 'קודם ספר לי: «כרטיס ויזה מסגרת 10000».';
 
-      const card = (p.cardName && Store.findCard(p.cardName)) || s.cards[0];
+      const card = (p.cardName && Store.findCard(p.cardName)) || Store.creditCards()[0] || s.cards[0];
+      if (card.kind === 'debit')
+        return '<span class="m-title">🤔 ' + U.esc(card.name) + ' הוא כרטיס דביט</span>'
+          + 'בדביט אין חיוב חודשי מרוכז — כל קנייה כבר ירדה מהעו"ש ביום שקנית.'
+          + '<br><span class="muted">אם הכרטיס בעצם קרדיט, כתוב «' + U.esc(card.name) + ' קרדיט».</span>';
       Store.snapshot('חיוב אשראי');
       const beforeChk = s.balances.checking;
       const outBefore = Store.cardOutstanding(card.id);

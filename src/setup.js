@@ -110,16 +110,20 @@ window.Setup = (function () {
       key: 'cards',
       icon: '💳',
       title: 'כרטיסי אשראי',
-      ask: 'אילו כרטיסי אשראי יש לך, ומה המסגרת של כל אחד?',
-      format: 'כרטיס ויזה מסגרת 10000',
+      ask: 'אילו כרטיסים יש לך, ומה המסגרת של כל אחד?<br>'
+        + 'ציין גם <b>קרדיט</b> (חיוב מרוכז בחודש הבא) או <b>דביט</b> (יורד מיד).',
+      format: 'כרטיס ויזה קרדיט מסגרת 10000',
+      altFormat: 'או: כרטיס מקס דביט מסגרת 5000',
       skippable: true,
       skipNote: 'אפשר להוסיף עוד כרטיסים אחר כך, בכל שלב.',
       apply(text, num) {
         if (num == null) return null;
-        const name = Parser.detectCardName(text) || 'אשראי';
+        const kind = Parser.detectCardKind(text);
+        const name = Parser.detectCardName(text) || (kind === 'debit' ? 'דביט' : 'אשראי');
         const billing = (text.match(/(?:חיוב|נגבה|מחויב)\s*(?:ב|ה)?(\d{1,2})/) || [])[1];
-        const c = Store.upsertCard(name, num, billing ? Number(billing) : null);
-        return 'כרטיס ' + U.esc(c.name) + ' עם מסגרת ' + M(c.limit);
+        const c = Store.upsertCard(name, num, billing ? Number(billing) : null, kind);
+        return 'כרטיס ' + U.esc(c.name) + ' (' + (c.kind === 'debit' ? 'דביט' : 'קרדיט')
+          + ') עם מסגרת ' + M(c.limit);
       }
     },
     {
