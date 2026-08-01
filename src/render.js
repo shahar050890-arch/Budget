@@ -222,16 +222,22 @@ window.Render = (function () {
       const A = Parser.ACCOUNTS;
       const isTransfer = t.type === 'transfer';
       const isDeposit = t.type === 'deposit';
+      const isSettle = t.type === 'settlement';
+      const ev = t.eventId ? Store.get().events.find(x => x.id === t.eventId) : null;
       const sub = isTransfer
         ? A[t.from].label + ' ← ' + A[t.to].label
         : isDeposit
           ? 'הפקדה ל' + A[t.to].label
-          : U.esc(t.category)
-          + (card ? ' · ' + U.esc(card.name) : '')
-          + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
+          : isSettle
+            ? 'ירידת חיוב' + (card ? ' · ' + U.esc(card.name) : '')
+            : U.esc(t.category)
+            + (card ? ' · ' + U.esc(card.name) : '')
+            + (t.method ? ' · ' + U.esc(t.method) : '')
+            + (ev ? ' · 🎉 ' + U.esc(ev.name) : '')
+            + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
 
       html += '<div class="row">'
-        + '<div class="row-ico">' + (isTransfer ? '🔁' : isDeposit ? '💵' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
+        + '<div class="row-ico">' + (isTransfer ? '🔁' : isDeposit ? '💵' : isSettle ? '💳' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
         + '<div class="row-main">'
         + '<div class="row-title">' + U.esc(t.note || t.category) + '</div>'
         + '<div class="row-sub">' + sub + '</div>'
@@ -284,6 +290,35 @@ window.Render = (function () {
 
   /* ---------------- יעדים והפרשות ---------------- */
 
+  function events() {
+    const box = document.getElementById('eventsList');
+    const list = Store.get().events;
+    if (!list.length) {
+      box.innerHTML = empty('אין אירועים.<br>«אירוע חדש יום הולדת לשירה תקציב 2000»<br>ואז כל הוצאה שתזכיר את שם האירוע תיספר אליו.');
+      return;
+    }
+    const sorted = list.slice().sort((a, b) => (a.closed === b.closed ? 0 : a.closed ? 1 : -1));
+    box.innerHTML = sorted.map(e => {
+      const st = Store.eventStatus(e);
+      const pct = st.budget ? U.clamp(st.progress, 2, 100) : 100;
+      return '<div class="block">'
+        + '<div class="block-head"><strong>' + (e.closed ? '🏁' : '🎉') + ' ' + U.esc(e.name)
+        + (e.closed ? ' <span class="pill">נסגר</span>' : '') + '</strong>'
+        + '<span>' + M(st.spent) + (st.budget ? ' / ' + M(st.budget) : '')
+        + ' <button class="row-del" data-del-event="' + e.id + '">✕</button></span></div>'
+        + '<div class="bar"><div class="bar-fill ' + (st.budget ? barClass(st.progress) : '')
+        + '" style="width:' + pct + '%"></div></div>'
+        + '<div class="row-sub">' + st.count + ' הוצאות · מ-' + U.niceDate(e.startDate)
+        + (st.budget ? (st.over ? ' · 🚨 חריגה של ' + M(-st.left) : ' · נשאר ' + M(st.left)) : '')
+        + '</div>'
+        + (st.categories.length
+          ? '<div class="row-sub">' + st.categories.slice(0, 4).map(([c, v]) =>
+            Parser.categoryIcon(c) + ' ' + U.esc(c) + ' ' + M(v)).join(' · ') + '</div>'
+          : '')
+        + '</div>';
+    }).join('');
+  }
+
   function goals() {
     const box = document.getElementById('goalsList');
     const list = Store.get().goals;
@@ -330,11 +365,12 @@ window.Render = (function () {
   function all() {
     dashboard();
     transactions();
+    events();
     cards();
     debts();
     goals();
     allocations();
   }
 
-  return { all, dashboard, balances, transactions, cards, debts, goals, allocations };
+  return { all, dashboard, balances, transactions, events, cards, debts, goals, allocations };
 })();

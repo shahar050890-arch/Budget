@@ -16,6 +16,13 @@ window.Engine = (function () {
 
     lastInput = String(raw || '');
     turn++;
+
+    // תשובה לשאלה שנשארה פתוחה ("על מה הייתה ההעברה?")
+    if (s.pendingAsk && s.pendingAsk.type === 'category') {
+      const answered = answerCategory(raw);
+      if (answered) return answered;
+    }
+
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
     return fn(p, raw);
@@ -50,6 +57,45 @@ window.Engine = (function () {
     if (share >= 0.25) return say(['זו הוצאה גדולה. ', 'סכום רציני. ', 'זה נתח משמעותי מהחודש. ']);
     if (share >= 0.08) return say(['הוצאה לא קטנה. ', 'סכום בינוני. ', '']);
     return '';
+  }
+
+  /**
+   * המשתמש עונה על "על מה הייתה ההעברה?" — משייך את התשובה לתנועה שנשמרה.
+   * מחזיר null אם התשובה נראית כמו פעולה חדשה ולא כמו תשובה.
+   */
+  function answerCategory(raw) {
+    const s = Store.get();
+    const text = Parser.normalize(raw);
+    // הודעה עם סכום היא פעולה חדשה, לא תשובה על הקודמת
+    if (Parser.findNumbers(text).length) { s.pendingAsk = null; Store.save(); return null; }
+
+    const tx = s.transactions.find(t => t.id === s.pendingAsk.txId);
+    s.pendingAsk = null;
+    if (!tx) { Store.save(); return null; }
+
+    if (/^(לא|לא יודע|לא משנה|עזוב|דלג|לא חשוב)$/i.test(text.trim())) {
+      Store.save();
+      return '<span class="m-title">בסדר</span>השארתי את זה תחת «כללי». אפשר לשנות אחר כך.';
+    }
+
+    const cat = Parser.explicitCategory(text);
+    const known = cat !== 'כללי';
+    const name = known ? cat : Parser.tidyThing(text);
+    if (!name) { Store.save(); return null; }
+
+    // נושא שלא מוכר — נפתחת עבורו קטגוריה
+    if (!known) Store.addCustomCategory(name, Parser.guessIcon(name));
+
+    tx.category = name;
+    if (!tx.note || tx.note === 'כללי') tx.note = name;
+    Store.save();
+
+    let html = '<span class="m-title">✅ שייכתי</span>'
+      + M(tx.amount) + ' → ' + Parser.categoryIcon(name) + ' <b>' + U.esc(name) + '</b>'
+      + (tx.method ? ' <span class="tag">' + U.esc(tx.method) + '</span>' : '');
+    if (!known) html += '<br><span class="muted">פתחתי קטגוריה חדשה בשם הזה.</span>';
+    html += limitWarning(name);
+    return html;
   }
 
   /** שורת יתרות מצטברת — מוצגת אחרי כל תנועה */
@@ -121,6 +167,42 @@ window.Engine = (function () {
     return html;
   }
 
+  /** סיכום אירוע: כמה יצא, על מה, ומול התקציב אם הוגדר */
+  function eventReport(e, closing) {
+    const st = Store.eventStatus(e);
+    if (!st.count)
+      return '<span class="m-title">🎉 ' + U.esc(e.name) + '</span>'
+        + 'עוד לא נרשמו הוצאות לאירוע הזה.'
+        + '<br><span class="muted">כתוב למשל «קניתי עוגה 180 ל' + U.esc(e.name) + '».</span>';
+
+    let html = (closing ? '' : '<span class="m-title">🎉 ' + U.esc(e.name) + '</span>')
+      + 'סה"כ יצא: <b>' + M(st.spent) + '</b> ב־' + st.count + ' הוצאות, על פני ' + st.days + ' ימים.';
+
+    if (st.budget) {
+      html += '<hr>מול תקציב של ' + M(st.budget) + ': ';
+      html += st.over
+        ? '🚨 חריגה של ' + bad(M(-st.left)) + ' (' + st.progress + '%)'
+        : 'נשאר ' + ok(M(st.left)) + ' (' + st.progress + '% נוצלו)';
+    }
+
+    html += '<hr><b>על מה:</b><ul>'
+      + st.categories.map(([c, v]) =>
+        '<li>' + Parser.categoryIcon(c) + ' ' + U.esc(c) + ' — ' + M(v)
+        + ' <span class="muted">(' + U.pct(v, st.spent) + '%)</span></li>').join('')
+      + '</ul>';
+
+    const list = Store.eventTx(e.id).slice(0, 5);
+    if (list.length) {
+      html += '<span class="muted">' + list.map(t => U.esc(t.note) + ' ' + M(t.amount)).join(' · ') + '</span>';
+    }
+
+    if (closing) {
+      const income = Store.monthIncome();
+      if (income) html += '<hr>זה ' + b(U.pct(st.spent, income) + '%') + ' מהכנסה חודשית.';
+    }
+    return html;
+  }
+
   function cardWarning(card) {
     if (!card || !card.limit) return '';
     const used = Store.cardUsed(card.id);
@@ -148,6 +230,8 @@ window.Engine = (function () {
         note: p.note,
         date: p.date,
         source: source,
+        method: p.method || null,
+        eventId: p.eventId || null,
         cardId: card ? card.id : null
       });
 
@@ -158,8 +242,29 @@ window.Engine = (function () {
         + bad('-' + M(tx.amount)) + ' · ' + Parser.categoryIcon(tx.category) + ' ' + U.esc(tx.category)
         + (tx.note && tx.note !== tx.category ? ' · ' + U.esc(tx.note) : '')
         + (card ? ' <span class="tag">' + U.esc(card.name) + '</span>' : '')
+        + (p.method ? ' <span class="tag">' + U.esc(p.method) + '</span>' : '')
+        + (p.eventName ? ' <span class="tag">🎉 ' + U.esc(p.eventName) + '</span>' : '')
         + (source && source !== 'checking' ? ' <span class="tag">' + A[source].icon + ' מה' + A[source].label + '</span>' : '')
         + (tx.date !== U.todayISO() ? ' <span class="tag">' + U.niceDate(tx.date) + '</span>' : '');
+
+      // העברה בביט/פייבוקס בלי הקשר — שואלים על מה, ומחכים לתשובה
+      if (p.needsCategory) {
+        Store.get().pendingAsk = { type: 'category', txId: tx.id };
+        Store.save();
+        return html + '<hr><b>על מה הייתה ההעברה?</b>'
+          + '<br><span class="muted">תכתוב מילה אחת ואשייך אותה — למשל «מתנה», «אוכל», «שכר דירה».</span>';
+      }
+
+      // סיכום ריצה של האירוע
+      if (p.eventId) {
+        const ev = Store.get().events.find(x => x.id === p.eventId);
+        const st = Store.eventStatus(ev);
+        html += '<hr>🎉 <b>' + U.esc(ev.name) + '</b>: ' + b(M(st.spent)) + ' עד כה';
+        if (st.budget) {
+          html += ' מתוך ' + M(st.budget);
+          html += st.over ? ' — ' + bad('חריגה של ' + M(-st.left)) : ' · נשאר ' + ok(M(st.left));
+        }
+      }
 
       // משיכה מחיסכון או ממניות — שווה לומר מה זה עשה ליתרה שם
       if (source && source !== 'checking' && Store.get().declared[source]) {
@@ -398,6 +503,136 @@ window.Engine = (function () {
       if (plan.free < 0) html += '<br>⚠️ ההפרשה הזו מכניסה אותך למינוס חודשי. שקול סכום נמוך יותר.';
       else if (plan.income) html += '<br>שיעור החיסכון שלך: ' + b(U.pct(Store.totalAllocations() + Store.goalsMonthly(), plan.income) + '%') + ' מההכנסה.';
       return html;
+    },
+
+    /* ---------- אירועים ---------- */
+    eventNew(p) {
+      if (!p.name)
+        return '<span class="m-title">🎉 איך לקרוא לאירוע?</span>'
+          + 'כתוב למשל: <b>אירוע חדש יום הולדת לשירה</b>'
+          + '<br><span class="muted">ואפשר גם עם תקציב: «אירוע חדש יום הולדת לשירה תקציב 2000».</span>';
+
+      const existing = Store.findEvent(p.name);
+      if (existing && !existing.closed)
+        return '<span class="m-title">כבר יש אירוע כזה</span>'
+          + '«' + U.esc(existing.name) + '» כבר פתוח, עם ' + b(M(Store.eventTotal(existing.id))) + ' עד כה.';
+
+      Store.snapshot('אירוע');
+      const e = Store.addEvent(p.name, p.budget);
+
+      let html = '<span class="m-title">🎉 נפתח אירוע: ' + U.esc(e.name) + '</span>'
+        + (e.budget ? 'תקציב: ' + b(M(e.budget)) : 'בלי תקציב מוגדר — רק מעקב.');
+
+      html += '<hr>מעכשיו כל הוצאה שתזכיר בה «' + U.esc(e.name) + '» תיספר לאירוע:'
+        + '<ul><li>קניתי עוגה 180 ל' + U.esc(e.name) + '</li>'
+        + '<li>שילמתי 400 על מתנה ל' + U.esc(e.name) + '</li></ul>'
+        + '<span class="muted">לסיכום בכל רגע: «כמה הוצאתי על ' + U.esc(e.name) + '». לסיום: «סגור אירוע ' + U.esc(e.name) + '».</span>';
+      return html;
+    },
+
+    eventQuery(p) {
+      const e = p.name ? Store.findEvent(p.name) : (Store.openEvents()[0] || null);
+      if (!e) {
+        const open = Store.openEvents();
+        if (!open.length)
+          return '<span class="m-title">אין אירועים פתוחים</span>'
+            + 'אפשר לפתוח אחד: <b>אירוע חדש יום הולדת לשירה</b>';
+        return '<span class="m-title">🎉 האירועים שלך</span><ul>'
+          + open.map(x => '<li>' + U.esc(x.name) + ' — ' + M(Store.eventTotal(x.id)) + '</li>').join('')
+          + '</ul>';
+      }
+      return eventReport(e);
+    },
+
+    eventClose(p) {
+      const e = Store.findEvent(p.name) || Store.openEvents()[0];
+      if (!e) return '<span class="m-title">לא מצאתי אירוע כזה</span>';
+      Store.snapshot('סגירת אירוע');
+      Store.closeEvent(e.id);
+      return '<span class="m-title">🏁 האירוע נסגר: ' + U.esc(e.name) + '</span>'
+        + eventReport(e, true);
+    },
+
+    eventDelete(p) {
+      const e = Store.findEvent(p.name);
+      if (!e) return '<span class="m-title">לא מצאתי אירוע כזה</span>';
+      Store.snapshot('מחיקת אירוע');
+      Store.removeEvent(e.id);
+      return '🗑️ האירוע <b>' + U.esc(e.name) + '</b> נמחק. ההוצאות עצמן נשארו רשומות.';
+    },
+
+    /* ---------- ניהול קטגוריות ---------- */
+    categoryNew(p) {
+      if (!p.name)
+        return '<span class="m-title">איך לקרוא לקטגוריה?</span>'
+          + 'כתוב למשל: <b>תפתח קטגוריה סיגריות</b>';
+
+      const known = Parser.CATEGORIES.some(c => c.name === p.name);
+      if (known)
+        return '<span class="m-title">הקטגוריה כבר קיימת</span>'
+          + Parser.categoryIcon(p.name) + ' <b>' + U.esc(p.name) + '</b> היא קטגוריה מובנית — אפשר להשתמש בה מיד.';
+
+      Store.snapshot('קטגוריה חדשה');
+      Store.addCustomCategory(p.name, Parser.guessIcon(p.name));
+      if (p.amount) Store.setLimit(p.name, p.amount);
+
+      return '<span class="m-title">' + Parser.categoryIcon(p.name) + ' נפתחה קטגוריה: ' + U.esc(p.name) + '</span>'
+        + (p.amount ? 'עם הגבלה חודשית של ' + b(M(p.amount)) + '.<hr>' : '')
+        + 'כל הוצאה שתזכיר את המילה הזו תיכנס לכאן אוטומטית.'
+        + '<br><span class="muted">להגבלה: «הגבלה ל' + U.esc(p.name) + ' 500». למחיקה: «תמחק קטגוריה ' + U.esc(p.name) + '».</span>';
+    },
+
+    categoryDelete(p) {
+      if (!p.name) return '<span class="m-title">איזו קטגוריה למחוק?</span>כתוב «תמחק קטגוריה סיגריות».';
+
+      if (Parser.CATEGORIES.some(c => c.name === p.name))
+        return '<span class="m-title">אי אפשר למחוק קטגוריה מובנית</span>'
+          + '«' + U.esc(p.name) + '» היא חלק מהרשימה הקבועה. אפשר להסיר ממנה הגבלה: «הגבלה ל' + U.esc(p.name) + ' 0».';
+
+      Store.snapshot('מחיקת קטגוריה');
+      const had = Store.removeCustomCategory(p.name);
+      if (!had) return '<span class="m-title">לא מצאתי קטגוריה כזו</span>לא קיימת קטגוריה בשם «' + U.esc(p.name) + '».';
+
+      return '🗑️ הקטגוריה <b>' + U.esc(p.name) + '</b> נמחקה, וגם ההגבלה שלה.'
+        + '<br><span class="muted">הוצאות שכבר נרשמו בה נשארו — הן פשוט לא ייקלטו לשם יותר.</span>';
+    },
+
+    /* ---------- ירידת חיוב אשראי ---------- */
+    cardSettlement(p) {
+      const s = Store.get();
+      if (!s.cards.length)
+        return '<span class="m-title">אין כרטיסים רשומים</span>'
+          + 'קודם ספר לי: «כרטיס ויזה מסגרת 10000».';
+
+      const card = (p.cardName && Store.findCard(p.cardName)) || s.cards[0];
+      Store.snapshot('חיוב אשראי');
+      const beforeChk = s.balances.checking;
+      const outBefore = Store.cardOutstanding(card.id);
+      Store.addSettlement(card.id, p.amount,
+        'חיוב ' + card.name + (p.prevMonth ? ' — חודש קודם' : ''));
+
+      let html = '<span class="m-title">💳 חיוב האשראי ירד</span>'
+        + bad('-' + M(p.amount)) + ' · ' + U.esc(card.name)
+        + (p.prevMonth ? ' <span class="tag">חודש קודם</span>' : '');
+
+      html += '<hr><span class="muted">זו לא הוצאה חדשה — הקניות עצמן כבר נרשמו ביום שקנית. '
+        + 'זה רק הכסף שעוזב עכשיו את החשבון.</span>';
+
+      html += '<hr>🏛️ עובר ושב: ' + M(beforeChk) + ' → <b>' + M(s.balances.checking) + '</b>';
+
+      const outAfter = Store.cardOutstanding(card.id);
+      if (outBefore > 0) {
+        html += '<br>יתרת חיובים פתוחה ב' + U.esc(card.name) + ': '
+          + M(outBefore) + ' → ' + (outAfter ? b(M(outAfter)) : ok('0 ₪'));
+        if (p.amount > outBefore) {
+          html += '<br>⚠️ החיוב גדול מהסכום שרשמתי כפתוח. כנראה יש קניות שלא נרשמו — '
+            + 'ההפרש הוא ' + warn(M(p.amount - outBefore)) + '.';
+        }
+      }
+      if (s.balances.checking < 0)
+        html += '<br>🚨 החיוב הכניס את העו"ש למינוס.';
+
+      return html + balancesLine();
     },
 
     /* ---------- הפקדה לחשבון ---------- */

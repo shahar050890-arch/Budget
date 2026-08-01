@@ -373,6 +373,98 @@ check('הפתיח מתחלף בין הודעות',
 const a3 = Engine.handle('שילמתי 5000 על שיפוץ');
 check('תגובה לסכום גדול', /(הוצאה גדולה|סכום רציני|נתח משמעותי)/.test(a3), a3.slice(0, 140));
 
+console.log('\n== אירועים ==');
+r = p('אירוע חדש יום הולדת לשירה תקציב 2000');
+check('פתיחת אירוע', r.intent === 'eventNew' && r.name === 'יום הולדת לשירה' && r.budget === 2000, JSON.stringify(r));
+
+Engine.handle('אירוע חדש יום הולדת לשירה תקציב 2000');
+const ev = Store.get().events[0];
+check('האירוע נשמר', ev && ev.name === 'יום הולדת לשירה' && ev.budget === 2000, JSON.stringify(ev));
+
+r = p('קניתי עוגה 180 ליום הולדת לשירה');
+check('הוצאה משויכת לאירוע', r.intent === 'expense' && r.eventId === ev.id, JSON.stringify(r));
+
+Engine.handle('קניתי עוגה 180 ליום הולדת לשירה');
+Engine.handle('שילמתי 400 על מתנה ליום הולדת לשירה');
+Engine.handle('קניתי בלונים 120 ליום הולדת לשירה');
+check('סכום האירוע מצטבר', Store.eventTotal(ev.id) === 700, Store.eventTotal(ev.id));
+check('פילוח לפי קטגוריה באירוע', Store.eventStatus(ev).categories.length >= 2, JSON.stringify(Store.eventStatus(ev).categories));
+
+ans = Engine.handle('כמה הוצאתי על יום הולדת לשירה');
+check('שאילתת אירוע מחזירה סיכום', /700/.test(ans) && /יום הולדת/.test(ans), ans.slice(0, 120));
+check('הסיכום מציג מול תקציב', /2,000/.test(ans), ans.slice(0, 200));
+
+Engine.handle('קניתי אוכל 1500 ליום הולדת לשירה');
+check('חריגה מתקציב האירוע', Store.eventStatus(ev).over === true);
+
+ans = Engine.handle('סגור אירוע יום הולדת לשירה');
+check('סגירת אירוע', Store.get().events[0].closed === true, ans.slice(0, 80));
+
+r = p('קניתי משהו 50 ליום הולדת לשירה');
+check('אירוע סגור לא קולט הוצאות', !r.eventId, JSON.stringify(r));
+
+console.log('\n== העברות בביט ==');
+r = p('העברתי בביט 500 שקל');
+check('העברה בביט', r.intent === 'expense' && r.amount === 500 && r.method === 'ביט' && r.needsCategory, JSON.stringify(r));
+
+r = p('העברתי בביט 500 על מתנה');
+check('ביט עם קטגוריה', r.method === 'ביט' && r.category === 'מתנות' && !r.needsCategory, JSON.stringify(r));
+
+r = p('שילמתי בפייבוקס 200 על אוכל');
+check('פייבוקס', r.method === 'פייבוקס' && r.category === 'מזון', JSON.stringify(r));
+
+ans = Engine.handle('העברתי בביט 500 שקל');
+check('שואל על מה ההעברה', /על מה הייתה ההעברה/.test(ans), ans.slice(0, 150));
+check('נשמרה שאלה פתוחה', Store.get().pendingAsk && Store.get().pendingAsk.type === 'category');
+
+const spentBeforeAns = Store.monthExpense();
+ans = Engine.handle('מתנה לחבר');
+check('התשובה משייכת קטגוריה', /שייכתי/.test(ans) && /מתנות/.test(ans), ans.slice(0, 120));
+check('השאלה נסגרה', !Store.get().pendingAsk);
+check('לא נוצרה הוצאה כפולה', Store.monthExpense() === spentBeforeAns, Store.monthExpense());
+check('התנועה עודכנה', Store.get().transactions.find(t => t.amount === 500 && t.method === 'ביט').category === 'מתנות');
+
+console.log('\n== ניהול קטגוריות ==');
+r = p('תפתח קטגוריה סיגריות');
+check('פתיחת קטגוריה', r.intent === 'categoryNew' && r.name === 'סיגריות', JSON.stringify(r));
+
+Engine.handle('תפתח קטגוריה אלכוהול');
+check('הקטגוריה נוצרה', Store.get().customCategories.some(c => c.name === 'אלכוהול'));
+check('אייקון מתאים', Parser.categoryIcon('אלכוהול') === '🍷', Parser.categoryIcon('אלכוהול'));
+
+r = p('תמחק קטגוריה אלכוהול');
+check('מחיקת קטגוריה', r.intent === 'categoryDelete' && r.name === 'אלכוהול', JSON.stringify(r));
+
+Engine.handle('הגבלה לאלכוהול 300');
+ans = Engine.handle('תמחק קטגוריה אלכוהול');
+check('הקטגוריה נמחקה', !Store.get().customCategories.some(c => c.name === 'אלכוהול'));
+check('גם ההגבלה נמחקה', !Store.get().limits['אלכוהול']);
+
+ans = Engine.handle('תמחק קטגוריה מזון');
+check('קטגוריה מובנית מוגנת', /אי אפשר למחוק/.test(ans), ans.slice(0, 80));
+
+console.log('\n== ירידת חיוב אשראי ==');
+r = p('ירדה הורדה מהאשראי 3000 מחודש שעבר');
+check('זיהוי חיוב אשראי', r.intent === 'cardSettlement' && r.amount === 3000 && r.prevMonth, JSON.stringify(r));
+
+r = p('נגבה חיוב ויזה 1200');
+check('חיוב עם שם כרטיס', r.intent === 'cardSettlement' && r.cardName === 'ויזה', JSON.stringify(r));
+
+const cardId = Store.get().cards[0].id;
+const chkPreSettle = Store.get().balances.checking;
+const spentPreSettle = Store.monthExpense();
+const outPre = Store.cardOutstanding(cardId);
+Engine.handle('ירד חיוב ויזה 300');
+check('החיוב ירד מהעו"ש',
+  Store.get().balances.checking === chkPreSettle - 300, Store.get().balances.checking);
+check('החיוב אינו הוצאה חדשה', Store.monthExpense() === spentPreSettle, Store.monthExpense());
+check('היתרה הפתוחה קטנה',
+  Store.cardOutstanding(cardId) === Math.max(0, outPre - 300),
+  outPre + ' → ' + Store.cardOutstanding(cardId));
+
+ans = Engine.handle('ירד חיוב ויזה 99999');
+check('מזהיר כשהחיוב גדול מהרשום', /גדול מהסכום שרשמתי/.test(ans), ans.slice(0, 200));
+
 console.log('\n== אשף ההקמה ==');
 Store.reset();
 check('אשף פעיל בהתחלה', Store.get().setup.done === false);
