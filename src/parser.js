@@ -578,11 +578,28 @@ window.Parser = (function () {
     }
 
     /* --- מחיקה --- */
-    if (/^(תמחק|מחק|הסר|תסיר)/.test(t)) {
+    const deleteVerb = /^(תמחק|מחק|הסר|תסיר|תבטל|בטל|תוריד|הורד)/.test(t)
+      || /(לא הוצאתי|לא קניתי|לא שילמתי|ביטלתי|החזרתי את|טעות|בטעות|לא היה|לא יצא)/.test(t);
+
+    if (deleteVerb) {
       if (/יעד|תוכנית|תכנית|חיסכון ל/.test(t)) return { intent: 'deleteGoal', name: extractGoalName(text) };
-      if (/כרטיס|אשראי/.test(t)) return { intent: 'deleteCard', name: detectCardName(text) };
+      if (/כרטיס אשראי|הכרטיס|כרטיס ה/.test(t)) return { intent: 'deleteCard', name: detectCardName(text) };
       if (/חוב|הלוואה/.test(t)) return { intent: 'deleteDebt', name: cleanNote(text, ['תמחק','מחק','חוב','הלוואה']) };
-      return { intent: 'unknown', text };
+
+      // מחיקת הוצאה — ברירת המחדל של פקודת מחיקה
+      const last = /(אחרונה|אחרון|הזאת|הזו|הזה|האחרונה|האחרון|עכשיו|שרשמתי|שהוספתי)/.test(t);
+      const what = stripWords(text,
+        ['תמחק','מחק','הסר','תסיר','תבטל','בטל','תוריד','הורד','את','ההוצאה','הוצאה','הקנייה',
+         'הקניה','קנייה','קניה','העסקה','עסקה','התנועה','תנועה','הרישום','רישום','אחרונה','אחרון',
+         'הזאת','הזו','הזה','האחרונה','האחרון','שרשמתי','שהוספתי','לא','הוצאתי','קניתי','שילמתי',
+         'ביטלתי','החזרתי','טעות','בטעות','היה','יצא','בסוף','של','שקל','שקלים','לי','על','עכשיו']);
+
+      return {
+        intent: 'deleteExpense',
+        last: last || (!nums.length && !what),
+        amount: nums.length ? maxNum : null,
+        text: what || null
+      };
     }
 
     /* --- משכורת ---

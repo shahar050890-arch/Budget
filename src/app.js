@@ -149,7 +149,7 @@
 
     if (d.delTx) {
       Store.snapshot('מחיקת עסקה');
-      const t = Store.removeTx(d.delTx);
+      const t = Store.deleteTx(d.delTx);
       if (t) toast('נמחקה עסקה על ' + U.money(t.amount));
     } else if (d.delCard) {
       if (!confirm('למחוק את הכרטיס? החיובים יישארו רשומים ללא שיוך.')) return;

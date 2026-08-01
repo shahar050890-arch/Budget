@@ -30,6 +30,10 @@ window.Engine = (function () {
       const answered = answerPayment(raw);
       if (answered) return answered;
     }
+    if (s.pendingAsk && s.pendingAsk.type === 'deleteChoice') {
+      const answered = answerDeleteChoice(raw);
+      if (answered) return answered;
+    }
 
     const p = Parser.parse(raw);
     const fn = HANDLERS[p.intent] || HANDLERS.unknown;
@@ -175,6 +179,91 @@ window.Engine = (function () {
     }
 
     return '<span class="m-title">🤔 לא זיהיתי</span>איך שילמת?' + paymentOptions();
+  }
+
+  /** מבצע את המחיקה ומדווח בדיוק מה בוטל ומה חזר */
+  function doDelete(tx) {
+    const s = Store.get();
+    Store.snapshot('מחיקת תנועה');
+
+    const goal = tx.goalId ? s.goals.find(g => g.id === tx.goalId) : null;
+    const debt = tx.debtId ? s.debts.find(d => d.id === tx.debtId) : null;
+    const so = tx.standingId ? s.standing.find(o => o.id === tx.standingId) : null;
+    const card = tx.cardId ? s.cards.find(c => c.id === tx.cardId) : null;
+
+    Store.deleteTx(tx.id);
+
+    const kind = tx.type === 'income' ? 'ההכנסה'
+      : tx.type === 'settlement' ? 'חיוב האשראי'
+        : tx.type === 'deposit' ? 'ההפקדה' : 'ההוצאה';
+
+    let html = '<span class="m-title">🗑️ ' + kind + ' נמחקה</span>'
+      + '<b>' + M(tx.amount) + '</b> · ' + U.esc(tx.note || tx.category)
+      + ' <span class="muted">(' + U.niceDate(tx.date) + ')</span>';
+
+    const back = [];
+    if (goal) back.push('הנצבר ב«' + U.esc(goal.name) + '» חזר ל־' + M(goal.saved));
+    if (debt) back.push('יתרת «' + U.esc(debt.name) + '» חזרה ל־' + M(debt.amount));
+    if (so) back.push('הוראת הקבע «' + U.esc(so.name) + '» לא תירשם שוב החודש');
+    if (card) back.push('החיוב הוסר מ־' + U.esc(card.name));
+
+    html += '<hr>' + (back.length
+      ? '<b>מה שהוחזר:</b><ul>' + back.map(x => '<li>' + x + '</li>').join('') + '</ul>'
+      : 'היתרות עודכנו בהתאם.');
+
+    const plan = Store.monthlyPlan();
+    html += 'פנוי החודש: ' + (plan.free >= 0 ? ok(M(plan.free)) : bad(M(plan.free))) + '.';
+    html += balancesLine();
+    html += '<br><span class="muted">טעות? כתוב <b>בטל</b> ואחזיר.</span>';
+    return html;
+  }
+
+  function recentList(list) {
+    if (!list.length) return '';
+    return '<b>התנועות האחרונות:</b><ul>'
+      + list.map(t => '<li>' + M(t.amount) + ' · ' + U.esc(t.note || t.category)
+        + ' <span class="muted">(' + U.niceDate(t.date) + ')</span></li>').join('')
+      + '</ul>';
+  }
+
+  /** תשובה על "איזו למחוק?" — מספר ברשימה, סכום, או "הכל" */
+  function answerDeleteChoice(raw) {
+    const s = Store.get();
+    const ids = s.pendingAsk.ids || [];
+    const text = Parser.normalize(raw).trim();
+
+    if (/^(הכל|הכול|כולן|כולם|את כולן)$/.test(text)) {
+      s.pendingAsk = null;
+      Store.snapshot('מחיקת תנועות');
+      let total = 0, n = 0;
+      ids.forEach(id => {
+        const t = s.transactions.find(x => x.id === id);
+        if (t) { total += t.amount; n++; Store.deleteTx(id); }
+      });
+      Store.save();
+      return '<span class="m-title">🗑️ נמחקו ' + n + ' תנועות</span>'
+        + 'סה"כ ' + b(M(total)) + ' הוחזרו.' + balancesLine()
+        + '<br><span class="muted">טעות? כתוב <b>בטל</b>.</span>';
+    }
+
+    const nums = Parser.findNumbers(text);
+    if (nums.length) {
+      const v = nums[0].value;
+      // מספר קטן = מיקום ברשימה; אחרת מתייחסים אליו כסכום
+      let tx = (v >= 1 && v <= ids.length && Number.isInteger(v))
+        ? s.transactions.find(x => x.id === ids[v - 1])
+        : null;
+      if (!tx) tx = s.transactions.find(x => ids.includes(x.id) && x.amount === v);
+      if (tx) { s.pendingAsk = null; Store.save(); return doDelete(tx); }
+    }
+
+    if (/^(בטל|לא|עזוב|שכח|ביטול)$/.test(text)) {
+      s.pendingAsk = null; Store.save();
+      return 'בסדר, לא מחקתי כלום.';
+    }
+
+    return '<span class="m-title">🤔 לא הבנתי איזו</span>'
+      + 'תכתוב את המספר ברשימה (1 עד ' + ids.length + '), את הסכום, או «הכל».';
   }
 
   function kindLabel(c) {
@@ -721,6 +810,39 @@ window.Engine = (function () {
       if (plan.free < 0) html += '<br>⚠️ ההפרשה הזו מכניסה אותך למינוס חודשי. שקול סכום נמוך יותר.';
       else if (plan.income) html += '<br>שיעור החיסכון שלך: ' + b(U.pct(Store.totalAllocations() + Store.goalsMonthly(), plan.income) + '%') + ' מההכנסה.';
       return html;
+    },
+
+    /* ---------- מחיקת הוצאה ---------- */
+    deleteExpense(p) {
+      const s = Store.get();
+      const all = s.transactions.filter(t => t.type !== 'transfer');
+      if (!all.length)
+        return '<span class="m-title">אין מה למחוק</span>לא רשומות אצלי תנועות.';
+
+      // "תמחק את ההוצאה האחרונה" — הכי נפוץ, ולכן ישיר
+      if (p.last && p.amount == null && !p.text) return doDelete(all[0]);
+
+      const matches = Store.findExpenses({ amount: p.amount, text: p.text });
+
+      if (!matches.length) {
+        let html = '<span class="m-title">🤔 לא מצאתי תנועה כזו</span>';
+        if (p.amount != null) html += 'אין אצלי תנועה על ' + M(p.amount) + '.';
+        else if (p.text) html += 'לא מצאתי משהו שמתאים ל«' + U.esc(p.text) + '».';
+        html += '<hr>' + recentList(all.slice(0, 4))
+          + '<span class="muted">אפשר לכתוב «תמחק את ההוצאה האחרונה» או «תמחק את ההוצאה של ' + U.num(all[0].amount) + '».</span>';
+        return html;
+      }
+
+      if (matches.length === 1) return doDelete(matches[0]);
+
+      // כמה מועמדים — שואלים במקום לנחש
+      s.pendingAsk = { type: 'deleteChoice', ids: matches.map(t => t.id) };
+      Store.save();
+      return '<span class="m-title">🤔 מצאתי ' + matches.length + ' תנועות מתאימות</span>'
+        + 'איזו למחוק?<ol>'
+        + matches.map(t => '<li><b>' + M(t.amount) + '</b> · ' + U.esc(t.note || t.category)
+          + ' <span class="muted">(' + U.niceDate(t.date) + ')</span></li>').join('')
+        + '</ol><span class="muted">תכתוב את המספר ברשימה, או «הכל» כדי למחוק את כולן.</span>';
     },
 
     /* ---------- הגדרת השאלה על אמצעי תשלום ---------- */
@@ -1524,6 +1646,11 @@ window.Engine = (function () {
         + '<li>מה אתה ממליץ? · איך אני עומד?</li>'
         + '<li>עדיף להחזיר את החוב או לחסוך?</li>'
         + '<li>איפה אני מבזבז הכי הרבה?</li></ul>'
+        + '<b>מחיקה ותיקון</b><ul>'
+        + '<li>תמחק את ההוצאה האחרונה</li>'
+        + '<li>תמחק את ההוצאה של 250</li>'
+        + '<li>תמחק את הקפה</li>'
+        + '<li>בטל <span class="muted">— מבטל את הפעולה האחרונה</span></li></ul>'
         + '<b>שאלות</b><ul>'
         + '<li>מה המצב? · כמה הוצאתי על מזון? · בטל</li></ul>';
     },
