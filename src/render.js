@@ -67,9 +67,14 @@ window.Render = (function () {
     const assets = Store.totalAssets();
     let html = ROWS.map(([k, ico, label]) => {
       const v = s.balances[k];
+      const mv = Store.accountMovement(k);
+      const trend = mv.net > 0 ? '<span class="good">▲ ' + M(mv.net) + '</span>'
+        : mv.net < 0 ? '<span class="bad">▼ ' + M(-mv.net) + '</span>'
+          : '<span class="muted">ללא שינוי</span>';
       return '<div class="row"><div class="row-ico">' + ico + '</div>'
         + '<div class="row-main"><div class="row-title">' + label + '</div>'
-        + '<div class="row-sub">' + (assets ? U.pct(v, assets) + '% מהנכסים' : '') + '</div></div>'
+        + '<div class="row-sub">' + (assets ? U.pct(v, assets) + '% מהנכסים · ' : '')
+        + 'החודש ' + trend + '</div></div>'
         + '<div class="row-amt ' + (v < 0 ? 'bad' : '') + '">' + M(v) + '</div></div>';
     }).join('');
 

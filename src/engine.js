@@ -135,6 +135,66 @@ window.Engine = (function () {
     return html + balancesLine();
   }
 
+  /**
+   * הפירוט של חשבון — אותו מבנה לשלושתם: תנועה החודש, מה מיועד,
+   * ומה זה אומר. עו"ש, חיסכון ומניות מקבלים יחס זהה.
+   */
+  function accountDetail(kind) {
+    const s = Store.get();
+    const mv = Store.accountMovement(kind);
+    const bal = s.balances[kind];
+    let html = '';
+
+    if (mv.in || mv.out) {
+      html += '<hr>החודש: ' + ok('+' + M(mv.in)) + ' נכנס · ' + bad('-' + M(mv.out)) + ' יצא'
+        + ' · נטו ' + (mv.net >= 0 ? ok('+' + M(mv.net)) : bad(M(mv.net)));
+    } else {
+      html += '<hr><span class="muted">לא הייתה תנועה בחשבון הזה החודש.</span>';
+    }
+
+    if (kind === 'checking') {
+      const pend = Store.pendingCardCharges();
+      const so = Store.standingRemaining();
+      if (pend || so) {
+        html += '<hr><b>מיועד כבר:</b>'
+          + (pend ? '<br>💳 חיובי אשראי — ' + warn(M(pend)) : '')
+          + (so ? '<br>🔁 הוראות קבע — ' + warn(M(so)) : '');
+        const real = bal - pend - so;
+        html += '<br>זמין באמת: ' + (real >= 0 ? ok(M(real)) : bad(M(real)));
+      }
+      const burn = Store.monthlyBurn();
+      if (burn) html += '<hr><span class="muted">מכסה ' + (bal / burn).toFixed(1) + ' חודשי הוצאות.</span>';
+    }
+
+    if (kind === 'savings') {
+      const alloc = Store.allocAmount('savings');
+      if (alloc) html += '<hr>מופרשים לכאן ' + b(M(alloc)) + ' בכל חודש.';
+      const goals = Store.activeGoals();
+      if (goals.length) {
+        const need = goals.reduce((a, g) => a + Math.max(0, g.target - g.saved), 0);
+        html += '<hr><b>מיועד ליעדים:</b><ul>'
+          + goals.map(g => '<li>' + U.esc(g.name) + ' — ' + M(g.saved) + ' מתוך ' + M(g.target) + '</li>').join('')
+          + '</ul>'
+          + 'סה"כ עוד חסר ליעדים: ' + b(M(need)) + '.';
+      }
+      const burn = Store.monthlyBurn();
+      if (burn) html += '<hr><span class="muted">לבד, מכסה ' + (bal / burn).toFixed(1) + ' חודשי הוצאות.</span>';
+    }
+
+    if (kind === 'stocks') {
+      const alloc = Store.allocAmount('stocks');
+      if (alloc) {
+        html += '<hr>מופרשים לכאן ' + b(M(alloc)) + ' בכל חודש';
+        html += ' — ' + b(M(alloc * 12)) + ' בשנה.';
+      }
+      const assets = Store.totalAssets();
+      if (assets) html += '<hr>' + b(U.pct(bal, assets) + '%') + ' מהנכסים שלך נמצאים בשוק ההון.';
+      html += '<br><span class="muted">הסכום כאן הוא מה שהזנת. אם השווי השתנה, עדכן: «יש לי במניות ' + U.num(bal) + '».</span>';
+    }
+
+    return html;
+  }
+
   /** שורת יתרות מצטברת — מוצגת אחרי כל תנועה */
   function balancesLine() {
     const s = Store.get();
@@ -989,7 +1049,8 @@ window.Engine = (function () {
           + '<li>יש לי בחיסכון 20000</li>'
           + '<li>יש לי במניות 15000</li></ul>'
           + '<span class="muted">ואז אוכל להראות לך את ההון הנקי ולעקוב אחריו.</span>';
-      return '<span class="m-title">💎 ההון שלך</span>' + netWorthBlock();
+      return '<span class="m-title">💎 ההון שלך</span>' + netWorthBlock()
+        + '<hr><span class="muted">לפירוט חשבון בודד: «כמה יש לי בחיסכון».</span>';
     },
 
     balanceQuery(p) {
@@ -1000,11 +1061,7 @@ window.Engine = (function () {
         return '<span class="m-title">🤷 אין לי את הנתון הזה</span>כתוב לי «יש לי ב' + label + ' 5000».';
 
       let html = '<span class="m-title">' + ico + ' ' + label + '</span>' + b(M(s.balances[p.kind]));
-      if (p.kind === 'checking') {
-        const pend = Store.pendingCardCharges();
-        if (pend) html += '<hr>אבל ' + warn(M(pend)) + ' מזה כבר מיועדים לחיוב האשראי.'
-          + '<br>זמין באמת: ' + (Store.liquidNow() >= 0 ? ok(M(Store.liquidNow())) : bad(M(Store.liquidNow())));
-      }
+      html += accountDetail(p.kind);
       return html;
     },
 

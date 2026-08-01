@@ -82,12 +82,22 @@
     if (!s.setup.done) {
       const st = Setup.step();
       if (st) {
-        const opts = [st.format];
-        if (st.skippable) opts.push('דלג');
-        box.innerHTML = opts.map(t => '<button class="chip" type="button">' + U.esc(t) + '</button>').join('');
+        // הפורמט ממלא את תיבת הכתיבה כדי שאפשר יהיה לערוך את המספר;
+        // פקודות ניווט נשלחות מיד בלחיצה אחת.
+        const opts = [{ t: st.format, fill: true }];
+        if (st.advise) opts.push({ t: 'מה אתה ממליץ?' });
+        if (st.skippable) opts.push({ t: 'דלג' });
+        if (Store.get().setup.step > 0) opts.push({ t: '↩︎ אחורה', send: 'אחורה' });
+
+        box.innerHTML = opts.map(o =>
+          '<button class="chip" type="button" data-send="' + (o.fill ? '' : U.esc(o.send || o.t)) + '">'
+          + U.esc(o.t) + '</button>').join('');
+
         box.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-          document.getElementById('chatInput').value = c.textContent;
-          document.getElementById('chatInput').focus();
+          const send_ = c.dataset.send;
+          if (send_) { send(send_); return; }
+          input.value = c.textContent;
+          input.focus();
         }));
         return;
       }

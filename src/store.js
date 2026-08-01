@@ -409,29 +409,48 @@ window.Store = (function () {
    * חיוב אשראי לא יורד מהעו"ש עכשיו — הוא יירד ביום החיוב, ולכן נספר
    * בנפרד כ"חיוב צפוי" (ראו pendingCardCharges).
    */
-  function applyBalance(t, dir) {
-    const b = state.balances;
-    if (t.type === 'transfer') {
-      b[t.from] -= dir * t.amount;
-      b[t.to] += dir * t.amount;
-      return;
-    }
+  /**
+   * ההשפעה של תנועה אחת על שלושת החשבונות.
+   * מרוכז במקום אחד כדי שהחלה, ביטול וסיכום תנועה חודשית לא ייפרדו.
+   */
+  function balanceDelta(t) {
+    const d = { checking: 0, savings: 0, stocks: 0 };
+
+    if (t.type === 'transfer') { d[t.from] -= t.amount; d[t.to] += t.amount; return d; }
     // הפקדה: כסף שנכנס לחשבון בלי להיות הכנסה של החודש
-    if (t.type === 'deposit') { b[t.to] += dir * t.amount; return; }
+    if (t.type === 'deposit') { d[t.to] += t.amount; return d; }
     // סליקת אשראי: הכסף עוזב את העו"ש עבור הוצאות שכבר נרשמו
-    if (t.type === 'settlement') { b.checking -= dir * t.amount; return; }
-    if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
+    if (t.type === 'settlement') { d.checking -= t.amount; return d; }
+    if (t.type === 'income') { d[t.dest || 'checking'] += t.amount; return d; }
 
     // תשלום בכרטיס: דביט יורד מהעו"ש מיד, קרדיט ממתין לחיוב החודשי.
     // onCard מסמן תשלום בכרטיס שעדיין לא נבחר איזה — גם הוא לא יורד עכשיו.
     if (t.cardId || t.onCard) {
-      if (t.debit) b.checking -= dir * t.amount;
-      return;
+      if (t.debit) d.checking -= t.amount;
+      return d;
     }
 
-    b[t.source || 'checking'] -= dir * t.amount;
-    if (t.goalId || t.toSavings) b.savings += dir * t.amount;
-    if (t.toStocks) b.stocks += dir * t.amount;
+    d[t.source || 'checking'] -= t.amount;
+    if (t.goalId || t.toSavings) d.savings += t.amount;
+    if (t.toStocks) d.stocks += t.amount;
+    return d;
+  }
+
+  function applyBalance(t, dir) {
+    const d = balanceDelta(t);
+    state.balances.checking += dir * d.checking;
+    state.balances.savings += dir * d.savings;
+    state.balances.stocks += dir * d.stocks;
+  }
+
+  /** התנועה נטו בחשבון במהלך החודש — כמה נכנס וכמה יצא */
+  function accountMovement(kind, mKey = U.currentMonth()) {
+    let inn = 0, out = 0;
+    txOfMonth(mKey).forEach(t => {
+      const v = balanceDelta(t)[kind];
+      if (v > 0) inn += v; else out -= v;
+    });
+    return { in: inn, out, net: inn - out };
   }
 
   function addTx(tx) {
@@ -869,7 +888,7 @@ window.Store = (function () {
     goalDeposited, goalRemainingThisMonth, goalStatus,
     monthlyPlan, avgMonthlyExpense, monthlyBurn, burnIsEstimated, monthsRecorded,
     addTx, removeTx,
-    setBalance, hasBalances, pendingCardCharges, totalAssets, netWorth, liquidNow,
+    setBalance, hasBalances, accountMovement, balanceDelta, pendingCardCharges, totalAssets, netWorth, liquidNow,
     savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
     findCard, upsertCard, removeCard, creditCards, debitCards, hasBothCardKinds,
     findDebt, upsertDebt, removeDebt,

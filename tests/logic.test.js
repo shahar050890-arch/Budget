@@ -644,17 +644,19 @@ check('אשף פעיל בהתחלה', Store.get().setup.done === false);
 check('פתיחה מסבירה מה לכתוב', /כתוב בדיוק ככה/.test(Setup.start()));
 
 const script = [
-  ['12000', 'salary'],
-  ['יש לי בעובר ושב 8000', 'checking'],
-  ['יש לי בחיסכון 20000', 'savings'],
-  ['דלג', 'stocks'],
-  ['10% לחיסכון', 'allocSavings'],
-  ['דלג', 'allocStocks'],
-  ['כרטיס ויזה מסגרת 10000', 'cards'],
-  ['אין', 'debts'],
-  ['לחסוך לרכב 15000 ב-4 חודשים', 'goal']
+  '12000',
+  'יש לי בעובר ושב 8000',
+  'יש לי בחיסכון 20000',
+  'דלג',                                   // מניות
+  '10% לחיסכון',
+  'דלג',                                   // מניות חודשי
+  'הוראת קבע ארנונה 400 ב-15 לחודש',
+  'דלג',                                   // סיום הוראות קבע
+  'כרטיס ויזה מסגרת 10000',
+  'אין',                                   // חובות
+  'לחסוך לרכב 15000 ב-4 חודשים'
 ];
-script.forEach(([msg]) => Engine.handle(msg));
+script.forEach(msg => Engine.handle(msg));
 
 check('האשף הסתיים', Store.get().setup.done === true);
 check('משכורת נקלטה באשף', Store.get().profile.salary === 12000);
@@ -667,20 +669,82 @@ check('הפרשה באחוזים דרך האשף',
 check('כרטיס נקלט באשף', Store.get().cards.length === 1 && Store.get().cards[0].limit === 10000);
 check('אין חובות אחרי דילוג', Store.get().debts.length === 0);
 check('יעד נקלט באשף', Store.get().goals.length === 1 && Store.get().goals[0].target === 15000);
+check('הוראת קבע נקלטה באשף',
+  Store.activeStandingOrders().length === 1 && Store.standingTotal() === 400,
+  JSON.stringify(Store.activeStandingOrders()));
 
 // אחרי האשף, הודעה רגילה מטופלת כרגיל
 ans = Engine.handle('קניתי קפה 28');
 check('אחרי האשף חוזרים לזרימה רגילה', /רשמתי|נרשם|נקלט|אצלי/.test(ans), ans.slice(0, 60));
 check('היתרה המצטברת מוצגת', /היתרות שלך/.test(ans));
 
-// שלב חובה לא ניתן לדילוג
 Store.reset();
-ans = Engine.handle('דלג');
-check('שלב חובה לא מדלג', /את השאלה הזו אני חייב/.test(ans), ans.slice(0, 80));
-check('נשארנו באותו שלב', Store.get().setup.step === 0);
-
 ans = Engine.handle('בלה בלה');
 check('קלט בלי מספר מבקש שוב', /לא הצלחתי לקרוא/.test(ans), ans.slice(0, 80));
+
+console.log('\n== חזרה אחורה והמלצות באשף ==');
+Store.reset();
+ans = Engine.handle('אחורה');
+check('אין לאן לחזור מהשאלה הראשונה', /אנחנו בשאלה הראשונה/.test(ans), ans.slice(0, 80));
+check('נשארנו בשלב 0', Store.get().setup.step === 0);
+
+Engine.handle('12000');
+Engine.handle('יש לי בעובר ושב 8000');
+check('התקדמנו שני שלבים', Store.get().setup.step === 2, Store.get().setup.step);
+
+ans = Engine.handle('אחורה');
+check('חזרנו שלב', Store.get().setup.step === 1, Store.get().setup.step);
+check('התשובה מציגה את השאלה הקודמת', /עובר ושב/.test(ans), ans.slice(0, 200));
+
+Engine.handle('יש לי בעובר ושב 5500');
+check('התשובה החדשה החליפה את הישנה',
+  Store.get().balances.checking === 5500, Store.get().balances.checking);
+
+check('המבוא מסביר על אחורה', /אחורה/.test(Setup.start()));
+
+// המלצה בשלב ההפרשה
+Store.reset();
+['12000', 'יש לי בעובר ושב 8000', 'דלג', 'דלג'].forEach(m => Engine.handle(m));
+const stepBefore = Store.get().setup.step;
+ans = Engine.handle('מה אתה ממליץ?');
+check('ההמלצה לא מקדמת שלב', Store.get().setup.step === stepBefore, Store.get().setup.step);
+check('ההמלצה נותנת סכום', /ההמלצה שלי/.test(ans) && /₪/.test(ans), ans.slice(0, 200));
+check('ההמלצה מסבירה למה', /(הכלל המקובל|כרית הביטחון|ההחזרים שלך)/.test(ans), ans.slice(0, 300));
+
+ans = Engine.handle('לא יודע');
+check('"לא יודע" גם מבקש המלצה', /ההמלצה שלי/.test(ans), ans.slice(0, 80));
+
+console.log('\n== חשבונות מוצגים אחיד ==');
+Store.reset();
+Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+Engine.handle('יש לי בחיסכון 20000');
+Engine.handle('יש לי במניות 15000');
+Engine.handle('להפריש 1000 לחיסכון');
+Engine.handle('להפריש 500 למניות');
+Engine.handle('לחסוך לרכב 15000 ב-4 חודשים');
+Engine.handle('קניתי אוכל 300');
+Engine.handle('הפקדתי 1000 לרכב');
+
+const acc1 = Engine.handle('כמה יש לי בעובר ושב?');
+const acc2 = Engine.handle('כמה יש לי בחיסכון?');
+const acc3 = Engine.handle('כמה יש לי במניות?');
+// כל אחד מדווח על התנועה שלו — או מה שזז, או שלא זז כלום
+const movementShown = t => /החודש:/.test(t) || /לא הייתה תנועה/.test(t);
+check('לשלושתם יש פירוט תנועה חודשית',
+  movementShown(acc1) && movementShown(acc2) && movementShown(acc3));
+check('חשבון שזזה בו תנועה מציג את הפירוט', /החודש:/.test(acc2), acc2.slice(0, 160));
+check('חיסכון מציג את ההפרשה החודשית', /מופרשים לכאן/.test(acc2), acc2.slice(0, 200));
+check('חיסכון מציג את היעדים', /מיועד ליעדים/.test(acc2) && /רכב/.test(acc2));
+check('מניות מציג הפרשה ואחוז מהנכסים',
+  /מופרשים לכאן/.test(acc3) && /מהנכסים/.test(acc3), acc3.slice(0, 250));
+check('עו"ש מציג מה מיועד', /זמין באמת|מיועד כבר|מכסה/.test(acc1), acc1.slice(0, 250));
+
+const mvS = Store.accountMovement('savings');
+check('תנועת החיסכון נמדדת', mvS.in === 1000, JSON.stringify(mvS));
+const mvC = Store.accountMovement('checking');
+check('תנועת העו"ש נמדדת', mvC.out === 1300, JSON.stringify(mvC));
 
 console.log('\n== סיכום ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');
