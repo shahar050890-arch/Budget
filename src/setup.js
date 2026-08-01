@@ -27,6 +27,28 @@ window.Setup = (function () {
       }
     },
     {
+      key: 'salaryDay',
+      icon: '📅',
+      title: 'מתי נכנסת המשכורת',
+      ask: 'באיזה תאריך המשכורת נכנסת לחשבון בכל חודש?',
+      format: 'המשכורת נכנסת ב-10 לחודש',
+      skippable: true,
+      skipNote: 'אם זה משתנה, כתוב <b>דלג</b>.',
+      advise() {
+        return 'ברוב המקומות המשכורת נכנסת בין ה-1 ל-10 לחודש.'
+          + '<br>זה חשוב לי כדי לחשב כמה נשאר לך <b>ליום עד המשכורת הבאה</b> '
+          + 'ולא סתם עד סוף החודש הקלנדרי — זה האופק האמיתי.';
+      },
+      apply(text, num) {
+        if (num == null || num < 1 || num > 31) return null;
+        Store.get().profile.salaryDay = num;
+        Store.save();
+        const days = Store.daysToSalary();
+        return 'המשכורת נכנסת ב-' + num + ' לחודש'
+          + (days != null ? ' — הבאה בעוד ' + days + ' ימים' : '');
+      }
+    },
+    {
       key: 'checking',
       icon: '🏛️',
       title: 'עובר ושב',
@@ -38,6 +60,20 @@ window.Setup = (function () {
         if (num == null) return null;
         Store.setBalance('checking', num);
         return 'עובר ושב: ' + M(num);
+      }
+    },
+    {
+      key: 'cash',
+      icon: '💵',
+      title: 'מזומן',
+      ask: 'כמה כסף <b>מזומן</b> יש לך בארנק?',
+      format: 'יש לי במזומן 500',
+      skippable: true,
+      skipNote: 'אם אתה לא מחזיק מזומן, כתוב <b>דלג</b>.',
+      apply(text, num) {
+        if (num == null) return null;
+        Store.setBalance('cash', num);
+        return 'מזומן: ' + M(num);
       }
     },
     {
@@ -58,14 +94,20 @@ window.Setup = (function () {
       key: 'stocks',
       icon: '📈',
       title: 'מניות',
-      ask: 'כמה כסף יש לך <b>כרגע</b> במניות והשקעות?',
+      ask: 'כמה כסף יש לך <b>כרגע</b> במניות והשקעות?<br>'
+        + 'אם התיק שלך בדולרים — פשוט כתוב «דולר» וזה יישמר ככה.',
       format: 'יש לי במניות 15000',
+      altFormat: 'או בדולרים: יש לי במניות 4000 דולר',
       skippable: true,
       skipNote: 'אם אתה לא משקיע בשוק ההון, כתוב <b>0</b> או <b>דלג</b>.',
       apply(text, num) {
         if (num == null) return null;
+        const cur = FX.detect(text);
+        if (cur) FX.setAccountCurrency('stocks', cur);
         Store.setBalance('stocks', num);
-        return 'מניות: ' + M(num);
+        const c = FX.accountCurrency('stocks');
+        return 'מניות: ' + FX.money(num, c)
+          + (c === 'USD' ? ' (' + M(FX.toILS(num, 'USD')) + ' לפי השער הנוכחי)' : '');
       }
     },
     {
@@ -175,10 +217,11 @@ window.Setup = (function () {
       key: 'cards',
       icon: '💳',
       title: 'כרטיסי אשראי',
-      ask: 'אילו כרטיסים יש לך, ומה המסגרת של כל אחד?<br>'
-        + 'ציין גם <b>קרדיט</b> (חיוב מרוכז בחודש הבא) או <b>דביט</b> (יורד מיד).',
-      format: 'כרטיס ויזה קרדיט מסגרת 10000',
-      altFormat: 'או: כרטיס מקס דביט מסגרת 5000',
+      ask: 'אילו כרטיסים יש לך?<br>'
+        + 'ציין <b>קרדיט</b> או <b>דביט</b>, את המסגרת, ו<b>באיזה תאריך יורד החיוב</b>.',
+      format: 'כרטיס ויזה קרדיט מסגרת 10000 חיוב ב-10',
+      altFormat: 'או: כרטיס מקס דביט מסגרת 5000 · אפשר להוסיף עוד אחרי כל תשובה',
+      repeatable: true,
       skippable: true,
       skipNote: 'אפשר להוסיף עוד כרטיסים אחר כך, בכל שלב.',
       apply(text, num) {
@@ -188,7 +231,8 @@ window.Setup = (function () {
         const billing = (text.match(/(?:חיוב|נגבה|מחויב)\s*(?:ב|ה)?(\d{1,2})/) || [])[1];
         const c = Store.upsertCard(name, num, billing ? Number(billing) : null, kind);
         return 'כרטיס ' + U.esc(c.name) + ' (' + (c.kind === 'debit' ? 'דביט' : 'קרדיט')
-          + ') עם מסגרת ' + M(c.limit);
+          + ') עם מסגרת ' + M(c.limit)
+          + (c.kind !== 'debit' ? ', חיוב ב-' + c.billingDay + ' לחודש' : '');
       }
     },
     {
@@ -247,7 +291,9 @@ window.Setup = (function () {
     const s = Store.get();
     const parts = [];
     if (s.profile.salary) parts.push('💰 ' + M(s.profile.salary));
+    if (s.profile.salaryDay) parts.push('📅 ' + s.profile.salaryDay);
     if (s.declared.checking) parts.push('🏛️ ' + M(s.balances.checking));
+    if (s.declared.cash) parts.push('💵 ' + M(s.balances.cash));
     if (s.declared.savings) parts.push('🐖 ' + M(s.balances.savings));
     if (s.declared.stocks) parts.push('📈 ' + M(s.balances.stocks));
     if (Store.allocAmount('savings')) parts.push('→🐖 ' + M(Store.allocAmount('savings')));
@@ -309,9 +355,12 @@ window.Setup = (function () {
     }
 
     html += '<b>מה שיש לך עכשיו</b><ul>'
-      + (s.declared.checking ? '<li>🏛️ עובר ושב: ' + M(s.balances.checking) + '</li>' : '')
-      + (s.declared.savings ? '<li>🐖 חיסכון: ' + M(s.balances.savings) + '</li>' : '')
-      + (s.declared.stocks ? '<li>📈 מניות: ' + M(s.balances.stocks) + '</li>' : '')
+      + Store.ACCOUNT_KINDS.filter(k => s.declared[k]).map(k => {
+        const NAMES = { checking: ['🏛️','עובר ושב'], cash: ['💵','מזומן'], savings: ['🐖','חיסכון'], stocks: ['📈','מניות'] };
+        const cur = FX.accountCurrency(k);
+        return '<li>' + NAMES[k][0] + ' ' + NAMES[k][1] + ': ' + FX.money(s.balances[k], cur)
+          + (cur === 'USD' ? ' (' + M(FX.toILS(s.balances[k], 'USD')) + ')' : '') + '</li>';
+      }).join('')
       + '</ul>'
       + 'הון נקי: <b>' + M(Store.netWorth()) + '</b>';
 

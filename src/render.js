@@ -50,44 +50,54 @@ window.Render = (function () {
     planList(plan);
   }
 
+  /** משבצות החשבונות — כל חשבון בגודל זהה ובאותה רמת פירוט */
   function balances() {
     const box = document.getElementById('balancesList');
     const s = Store.get();
     if (!Store.hasBalances()) {
-      box.innerHTML = empty('עוד לא סיפרת לי כמה כסף יש לך.<br>«יש לי בעובר ושב 8000» · «יש לי בחיסכון 20000» · «יש לי במניות 15000»');
+      box.innerHTML = empty('עוד לא סיפרת לי כמה כסף יש לך.<br>«יש לי בעובר ושב 8000» · «יש לי במזומן 500»<br>«יש לי בחיסכון 20000» · «יש לי במניות 15000»');
       return;
     }
 
-    const ROWS = [
-      ['checking', '🏛️', 'עובר ושב'],
-      ['savings', '🐖', 'חיסכון'],
-      ['stocks', '📈', 'מניות']
-    ].filter(r => s.declared[r[0]]);
-
+    const META = {
+      checking: ['🏛️', 'עובר ושב'], cash: ['💵', 'מזומן'],
+      savings: ['🐖', 'חיסכון'], stocks: ['📈', 'מניות']
+    };
+    const kinds = Store.ACCOUNT_KINDS.filter(k => s.declared[k]);
     const assets = Store.totalAssets();
-    let html = ROWS.map(([k, ico, label]) => {
+
+    let html = '<div class="acc-grid">' + kinds.map(k => {
+      const [ico, label] = META[k];
+      const cur = FX.accountCurrency(k);
       const v = s.balances[k];
       const mv = Store.accountMovement(k);
-      const trend = mv.net > 0 ? '<span class="good">▲ ' + M(mv.net) + '</span>'
-        : mv.net < 0 ? '<span class="bad">▼ ' + M(-mv.net) + '</span>'
+      const move = mv.net > 0 ? '<span class="up">▲ ' + M(mv.net) + '</span>'
+        : mv.net < 0 ? '<span class="down">▼ ' + M(-mv.net) + '</span>'
           : '<span class="muted">ללא שינוי</span>';
-      return '<div class="row"><div class="row-ico">' + ico + '</div>'
-        + '<div class="row-main"><div class="row-title">' + label + '</div>'
-        + '<div class="row-sub">' + (assets ? U.pct(v, assets) + '% מהנכסים · ' : '')
-        + 'החודש ' + trend + '</div></div>'
-        + '<div class="row-amt ' + (v < 0 ? 'bad' : '') + '">' + M(v) + '</div></div>';
-    }).join('');
+      return '<div class="acc-tile ' + k + '">'
+        + '<div class="acc-head"><span class="acc-ico">' + ico + '</span>' + label + '</div>'
+        + '<div class="acc-value' + (v < 0 ? ' bad' : '') + '">' + FX.money(v, cur) + '</div>'
+        + (cur === 'USD' ? '<div class="acc-alt">= ' + M(FX.toILS(v, 'USD')) + '</div>' : '')
+        + '<div class="acc-move">החודש ' + move + '</div>'
+        + '<div class="acc-note">' + (assets ? U.pct(Store.balanceILS(k), assets) + '% מהנכסים' : '') + '</div>'
+        + '</div>';
+    }).join('') + '</div>';
 
     const pend = Store.pendingCardCharges();
     const debt = Store.totalDebt();
-    if (pend) html += liability('💳', 'חיובי אשראי צפויים', pend);
-    if (debt) html += liability('🏦', 'חובות והלוואות', debt);
+    if (pend || debt) {
+      html += '<div style="margin-top:14px">'
+        + (pend ? liability('💳', 'חיובי אשראי צפויים', pend) : '')
+        + (debt ? liability('🏦', 'חובות והלוואות', debt) : '')
+        + '</div>';
+    }
 
     const net = Store.netWorth();
-    html += '<div class="row"><div class="row-ico">💎</div>'
-      + '<div class="row-main"><div class="row-title">הון נקי</div>'
-      + '<div class="row-sub">נכסים פחות התחייבויות</div></div>'
-      + '<div class="row-amt ' + (net >= 0 ? 'good' : 'bad') + '">' + M(net) + '</div></div>';
+    html += '<div class="acc-total"><span>💎 הון נקי — נכסים פחות התחייבויות</span>'
+      + '<b class="' + (net >= 0 ? 'good' : 'bad') + '">' + M(net) + '</b></div>';
+
+    const usd = kinds.some(k => FX.accountCurrency(k) === 'USD');
+    if (usd) html += '<div class="acc-note">' + FX.rateNote() + '</div>';
 
     box.innerHTML = html;
   }

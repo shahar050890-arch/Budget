@@ -10,13 +10,25 @@ global.localStorage = {
   removeItem: k => { delete store[k]; }
 };
 global.window = global;
+global.fetch = async () => { throw new Error('אין רשת בבדיקות'); };
 
-['util.js', 'store.js', 'parser.js', 'setup.js', 'engine.js'].forEach(f => {
+['util.js', 'numbers.js', 'fx.js', 'store.js', 'parser.js', 'setup.js', 'engine.js'].forEach(f => {
   eval(fs.readFileSync(path + f, 'utf8'));
 });
 
-// רוב הבדיקות עוסקות במצב שאחרי ההקמה; האשף עצמו נבדק בסוף.
+/**
+ * מצב נקי לבדיקות: אחרי ההקמה, ובלי השאלה על אמצעי תשלום —
+ * היא נבדקת בנפרד בסוף, ואחרת היא הייתה חוסמת כל בדיקה אחרת.
+ */
+function freshState() {
+  Store.reset();
+  Store.get().setup.done = true;
+  Store.get().settings = { askPayment: false };
+  Store.save();
+}
 Store.get().setup.done = true;
+Store.get().settings = { askPayment: false };
+Store.save();
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -466,8 +478,7 @@ ans = Engine.handle('ירד חיוב ויזה 99999');
 check('מזהיר כשהחיוב גדול מהרשום', /גדול מהסכום שרשמתי/.test(ans), ans.slice(0, 200));
 
 console.log('\n== קרדיט מול דביט ==');
-Store.reset();
-Store.get().setup.done = true;
+freshState();
 Engine.handle('המשכורת שלי 12000');
 Engine.handle('יש לי בעובר ושב 10000');
 
@@ -537,16 +548,14 @@ check('לא נוצרה הוצאה כפולה', Store.monthExpense() === spentPre
 check('התנועה שויכה', Store.get().transactions.find(t => t.amount === 250).cardId === debit.id);
 
 // כרטיס יחיד — לא שואל
-Store.reset();
-Store.get().setup.done = true;
+freshState();
 Engine.handle('המשכורת שלי 12000');
 Engine.handle('כרטיס ויזה קרדיט מסגרת 10000');
 r = p('שילמתי 250 באשראי על מסעדה');
 check('כרטיס יחיד — בלי שאלה', !r.cardAmbiguous, JSON.stringify(r));
 
 console.log('\n== הוראות קבע ==');
-Store.reset();
-Store.get().setup.done = true;
+freshState();
 Engine.handle('המשכורת שלי 12000');
 Engine.handle('יש לי בעובר ושב 10000');
 
@@ -645,7 +654,9 @@ check('פתיחה מסבירה מה לכתוב', /כתוב בדיוק ככה/.te
 
 const script = [
   '12000',
+  'המשכורת נכנסת ב-10 לחודש',
   'יש לי בעובר ושב 8000',
+  'יש לי במזומן 300',
   'יש לי בחיסכון 20000',
   'דלג',                                   // מניות
   '10% לחיסכון',
@@ -653,6 +664,7 @@ const script = [
   'הוראת קבע ארנונה 400 ב-15 לחודש',
   'דלג',                                   // סיום הוראות קבע
   'כרטיס ויזה מסגרת 10000',
+  'דלג',                                   // סיום כרטיסים
   'אין',                                   // חובות
   'לחסוך לרכב 15000 ב-4 חודשים'
 ];
@@ -661,6 +673,8 @@ script.forEach(msg => Engine.handle(msg));
 check('האשף הסתיים', Store.get().setup.done === true);
 check('משכורת נקלטה באשף', Store.get().profile.salary === 12000);
 check('עו"ש נקלט באשף', Store.get().balances.checking === 8000);
+check('מזומן נקלט באשף', Store.get().balances.cash === 300, Store.get().balances.cash);
+check('תאריך משכורת נקלט', Store.get().profile.salaryDay === 10, Store.get().profile.salaryDay);
 check('חיסכון נקלט באשף', Store.get().balances.savings === 20000);
 check('דילוג לא מגדיר מניות', !Store.get().declared.stocks);
 check('הפרשה באחוזים דרך האשף',
@@ -674,6 +688,8 @@ check('הוראת קבע נקלטה באשף',
   JSON.stringify(Store.activeStandingOrders()));
 
 // אחרי האשף, הודעה רגילה מטופלת כרגיל
+Store.get().settings = { askPayment: false };
+Store.save();
 ans = Engine.handle('קניתי קפה 28');
 check('אחרי האשף חוזרים לזרימה רגילה', /רשמתי|נרשם|נקלט|אצלי/.test(ans), ans.slice(0, 60));
 check('היתרה המצטברת מוצגת', /היתרות שלך/.test(ans));
@@ -689,12 +705,13 @@ check('אין לאן לחזור מהשאלה הראשונה', /אנחנו בשא
 check('נשארנו בשלב 0', Store.get().setup.step === 0);
 
 Engine.handle('12000');
+Engine.handle('המשכורת נכנסת ב-10 לחודש');
 Engine.handle('יש לי בעובר ושב 8000');
-check('התקדמנו שני שלבים', Store.get().setup.step === 2, Store.get().setup.step);
+check('התקדמנו שלושה שלבים', Store.get().setup.step === 3, Store.get().setup.step);
 
 ans = Engine.handle('אחורה');
-check('חזרנו שלב', Store.get().setup.step === 1, Store.get().setup.step);
-check('התשובה מציגה את השאלה הקודמת', /עובר ושב/.test(ans), ans.slice(0, 200));
+check('חזרנו שלב', Store.get().setup.step === 2, Store.get().setup.step);
+check('התשובה מציגה את השאלה הקודמת', /עובר ושב/.test(ans), ans.slice(0, 300));
 
 Engine.handle('יש לי בעובר ושב 5500');
 check('התשובה החדשה החליפה את הישנה',
@@ -704,7 +721,8 @@ check('המבוא מסביר על אחורה', /אחורה/.test(Setup.start()))
 
 // המלצה בשלב ההפרשה
 Store.reset();
-['12000', 'יש לי בעובר ושב 8000', 'דלג', 'דלג'].forEach(m => Engine.handle(m));
+['12000', 'דלג', 'יש לי בעובר ושב 8000', 'דלג', 'דלג', 'דלג']
+  .forEach(m => Engine.handle(m));   // עד שלב ההפרשה לחיסכון
 const stepBefore = Store.get().setup.step;
 ans = Engine.handle('מה אתה ממליץ?');
 check('ההמלצה לא מקדמת שלב', Store.get().setup.step === stepBefore, Store.get().setup.step);
@@ -715,8 +733,7 @@ ans = Engine.handle('לא יודע');
 check('"לא יודע" גם מבקש המלצה', /ההמלצה שלי/.test(ans), ans.slice(0, 80));
 
 console.log('\n== חשבונות מוצגים אחיד ==');
-Store.reset();
-Store.get().setup.done = true;
+freshState();
 Engine.handle('המשכורת שלי 12000');
 Engine.handle('יש לי בעובר ושב 9000');
 Engine.handle('יש לי בחיסכון 20000');
@@ -746,6 +763,127 @@ check('תנועת החיסכון נמדדת', mvS.in === 1000, JSON.stringify(mv
 const mvC = Store.accountMovement('checking');
 check('תנועת העו"ש נמדדת', mvC.out === 1300, JSON.stringify(mvC));
 
-console.log('\n== סיכום ==');
+
+
+console.log('\n== מספרים במילים ==');
+check('חמישים', HebNum.find('חמישים').value === 50, JSON.stringify(HebNum.find('חמישים')));
+check('מאה חמישים', HebNum.find('מאה חמישים').value === 150);
+check('שלוש מאות', HebNum.find('שלוש מאות').value === 300);
+check('אלף מאתיים', HebNum.find('אלף מאתיים').value === 1200);
+check('אלפיים', HebNum.find('אלפיים').value === 2000);
+check('חמשת אלפים', HebNum.find('חמישה אלפים').value === 5000, JSON.stringify(HebNum.find('חמישה אלפים')));
+check('מאה ועשרים', HebNum.find('מאה ועשרים').value === 120);
+check('טקסט בלי מספר', HebNum.find('קניתי לחם') === null);
+
+Store.reset(); Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 5000');
+
+r = p('קניתי קפה חמישים שקל');
+check('הוצאה במילים', r.intent === 'expense' && r.amount === 50, JSON.stringify(r));
+check('התיאור נקי מהמספר', !/חמישים/.test(r.note), r.note);
+
+r = p('שילמתי מאה חמישים על דלק');
+check('מאה חמישים בהוצאה', r.amount === 150 && r.category === 'תחבורה', JSON.stringify(r));
+
+Engine.handle('קניתי קפה חמישים שקל');
+check('נרשם 50', Store.monthExpense() === 50, Store.monthExpense());
+
+console.log('\n== מזומן ==');
+r = p('יש לי במזומן 500');
+check('יתרת מזומן', r.intent === 'balance' && r.kind === 'cash' && r.amount === 500, JSON.stringify(r));
+
+Engine.handle('יש לי במזומן 500');
+check('המזומן נשמר', Store.get().balances.cash === 500);
+check('המזומן נספר בנכסים', Store.totalAssets() === 5000 - 50 + 500, Store.totalAssets());
+
+r = p('הוצאתי 80 מהמזומן על חניה');
+check('הוצאה מהמזומן', r.intent === 'expense' && r.source === 'cash', JSON.stringify(r));
+const cashPre = Store.get().balances.cash;
+Engine.handle('הוצאתי 80 מהמזומן על חניה');
+check('ירד מהמזומן', Store.get().balances.cash === cashPre - 80, Store.get().balances.cash);
+
+console.log('\n== דולרים ==');
+check('ברירת מחדל שקלים', FX.accountCurrency('stocks') === 'ILS');
+r = p('אני רוצה שהמניות יהיו בדולרים');
+check('שינוי מטבע', r.intent === 'setCurrency' && r.kind === 'stocks' && r.code === 'USD', JSON.stringify(r));
+
+Engine.handle('אני רוצה שהמניות יהיו בדולרים');
+check('המטבע השתנה', FX.accountCurrency('stocks') === 'USD');
+check('שאר החשבונות נשארו בשקלים', FX.accountCurrency('checking') === 'ILS');
+
+Engine.handle('הדולר 3.8 עכשיו');
+check('שער ידני נשמר', Math.abs(FX.rate() - 3.8) < 0.001, FX.rate());
+check('מסומן כידני', FX.info().manual === true);
+
+Engine.handle('יש לי במניות 4000 דולר');
+check('יתרה בדולרים', Store.get().balances.stocks === 4000);
+check('המרה לשקל בנכסים',
+  Math.abs(Store.balanceILS('stocks') - 15200) < 1, Store.balanceILS('stocks'));
+
+r = p('כמה זה 100 דולר');
+check('בקשת המרה', r.intent === 'fxConvert' && r.amount === 100 && r.from === 'USD', JSON.stringify(r));
+ans = Engine.handle('כמה זה 100 דולר');
+check('ההמרה נכונה', /380/.test(ans), ans.slice(0, 160));
+
+ans = Engine.handle('מה שער הדולר?');
+check('שאילתת שער', /3.800/.test(ans), ans.slice(0, 140));
+
+console.log('\n== תאריך משכורת ==');
+Engine.handle('המשכורת שלי 12000');
+Store.get().profile.salaryDay = 10;
+Store.save();
+check('יום משכורת נשמר', Store.salaryDay() === 10);
+const nsd = Store.nextSalaryDate();
+check('תאריך משכורת הבא', /^\d{4}-\d{2}-10$/.test(nsd), nsd);
+check('ימים עד המשכורת', Store.daysToSalary() >= 0, Store.daysToSalary());
+check('הקצב היומי לפי המשכורת',
+  Store.monthlyPlan().paceHorizon === 'salary' || Store.daysToSalary() === 0,
+  Store.monthlyPlan().paceHorizon);
+
+console.log('\n== שאלת אמצעי תשלום ==');
+Store.reset(); Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 9000');
+Engine.handle('יש לי במזומן 400');
+Engine.handle('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב10');
+
+const pchk0 = Store.get().balances.checking;
+ans = Engine.handle('קניתי קפה 28');
+check('שואל איך שילמת', /איך שילמת/.test(ans), ans.slice(0, 160));
+check('מציג את הכרטיס ואת המזומן', /ויזה/.test(ans) && /מזומן/.test(ans));
+check('לא ירד עד שנדע', Store.get().balances.checking === pchk0, Store.get().balances.checking);
+
+const pcash0 = Store.get().balances.cash;
+const pspent0 = Store.monthExpense();
+ans = Engine.handle('מזומן');
+check('שויך למזומן', /שילמת במזומן/.test(ans), ans.slice(0, 100));
+check('ירד מהמזומן', Store.get().balances.cash === pcash0 - 28, Store.get().balances.cash);
+check('אין הוצאה כפולה', Store.monthExpense() === pspent0, Store.monthExpense());
+
+Engine.handle('קניתי לחם 20');
+ans = Engine.handle('ויזה');
+check('שיוך לכרטיס דרך השאלה', /ויזה/.test(ans) && /ייגבה/.test(ans), ans.slice(0, 160));
+
+// ביט עובר דרך האשראי — גם עליו שואלים
+r = p('העברתי בביט 300 על מתנה');
+check('ביט מסומן', r.method === 'ביט');
+ans = Engine.handle('העברתי בביט 300 על מתנה');
+check('שואל גם על ביט', /איך שילמת/.test(ans), ans.slice(0, 160));
+
+// כיבוי השאלה
+Engine.handle('ויזה');
+r = p('אל תשאל על כל הוצאה');
+check('כיבוי השאלה', r.intent === 'askPayment' && r.on === false, JSON.stringify(r));
+Engine.handle('אל תשאל על כל הוצאה');
+const pchk1 = Store.get().balances.checking;
+ans = Engine.handle('קניתי סנדוויץ 35');
+check('אחרי כיבוי לא שואל', !/איך שילמת/.test(ans), ans.slice(0, 120));
+check('ירד ישירות מהעו"ש', Store.get().balances.checking === pchk1 - 35, Store.get().balances.checking);
+
+Engine.handle('תשאל על כל הוצאה');
+check('אפשר להחזיר', Store.get().settings.askPayment === true);
+
+console.log('\n== סיכום סופי ==');
 console.log(pass + ' עברו, ' + fail + ' נכשלו\n');
 process.exit(fail ? 1 : 0);

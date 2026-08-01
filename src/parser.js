@@ -144,7 +144,8 @@ window.Parser = (function () {
   /* ---------------- חשבונות ---------------- */
 
   const ACCOUNTS = {
-    checking: { icon: '🏛️', label: 'עובר ושב', words: ['עובר ושב','עו"ש','עוש','חשבון הבנק','חשבון בנק','הבנק','החשבון','העו"ש','מזומן'] },
+    checking: { icon: '🏛️', label: 'עובר ושב', words: ['עובר ושב','עו"ש','עוש','חשבון הבנק','חשבון בנק','הבנק','החשבון','העו"ש'] },
+    cash:     { icon: '💵', label: 'מזומן',     words: ['מזומן','המזומן','כסף מזומן','בארנק','ארנק'] },
     savings:  { icon: '🐖', label: 'חיסכון',    words: ['חיסכון','חסכון','קרן החיסכון','קרן חיסכון','הפיקדון','פיקדון','החסכונות'] },
     stocks:   { icon: '📈', label: 'תיק המניות', words: ['מניות','תיק המניות','תיק מניות','ההשקעות','השקעות','הבורסה','בורסה','התיק'] }
   };
@@ -239,6 +240,11 @@ window.Parser = (function () {
   /** כל המספרים בטקסט, לפי סדר הופעה: [{value, start, end}] */
   function findNumbers(text) {
     const out = [];
+    // מספר שכתוב במילים — "חמישים שקל", "אלף מאתיים"
+    try {
+      const w = window.HebNum && HebNum.find(text);
+      if (w) out.push({ value: w.value, start: w.start, end: w.end, raw: w.raw, words: true });
+    } catch (e) { /* אין מודול מספרים — ממשיכים עם ספרות בלבד */ }
     const re = /(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|K|אלף|אלפים)?/g;
     let m;
     while ((m = re.exec(text))) {
@@ -246,9 +252,6 @@ window.Parser = (function () {
       if (m[2]) v *= 1000;
       out.push({ value: v, start: m.index, end: m.index + m[0].length, raw: m[0] });
     }
-    // מילות מספר עצמאיות
-    if (/(^|\s)אלפיים(\s|$)/.test(text)) out.push({ value: 2000, start: text.indexOf('אלפיים'), end: text.indexOf('אלפיים') + 6, raw: 'אלפיים' });
-    if (!out.length && /(^|\s)אלף(\s|$)/.test(text)) out.push({ value: 1000, start: text.indexOf('אלף'), end: text.indexOf('אלף') + 3, raw: 'אלף' });
     return out.sort((a, b) => a.start - b.start);
   }
 
@@ -280,6 +283,11 @@ window.Parser = (function () {
 
   function cleanNote(text, extra = []) {
     let t = ' ' + text + ' ';
+    // הסרת סכום שנכתב במילים ("חמישים שקל")
+    try {
+      const w = window.HebNum && HebNum.find(text);
+      if (w) t = ' ' + text.slice(0, w.start) + ' ' + text.slice(w.end) + ' ';
+    } catch (e) { /* ממשיכים */ }
     // הסרת סכומים ומטבע
     t = t.replace(/\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?/g, ' ');
     t = t.replace(/[₪%]/g, ' ');
@@ -377,13 +385,18 @@ window.Parser = (function () {
       return { intent: 'help' };
 
     /* --- יתרות בפועל --- */
-    const balKind = /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(t) ? 'checking'
-      : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(t) ? 'stocks'
-        : /(בחיסכון|בחסכון|קרן חיסכון|פיקדון)/.test(t) ? 'savings' : null;
+    function balKindOf(tt) {
+      return /(עובר ושב|עו"ש|עוש|חשבון בנק|בבנק|בחשבון)/.test(tt) ? 'checking'
+        : /(מזומן|בארנק|ארנק)/.test(tt) ? 'cash'
+          : /(תיק מניות|במניות|מניות|השקעות|בורסה)/.test(tt) ? 'stocks'
+            : /(בחיסכון|בחסכון|קרן חיסכון|פיקדון)/.test(tt) ? 'savings' : null;
+    }
+
+    const balKind = balKindOf(t);
 
     if (balKind && amount != null && /(יש לי|נמצא|יתרה|מונח|צבור|שמור|יושב|נשאר|בערך|כרגע|עדכן|תעדכן)/.test(t)
       && !/(להפריש|מפריש|הפרשה|כל חודש|בחודש|אחוז|%)/.test(t)) {
-      return { intent: 'balance', kind: balKind, amount: maxNum };
+      return { intent: 'balance', kind: balKind, amount: maxNum, currency: FX.detect(text) };
     }
 
     /* --- שאלת הון / יתרות --- */
@@ -492,6 +505,35 @@ window.Parser = (function () {
       if (day >= 1 && day <= 31) {
         return { intent: 'billingDay', cardName: detectCardName(text), day };
       }
+    }
+
+    /* --- לשאול או לא לשאול על אמצעי תשלום --- */
+    if (/(תשאל|לשאול|תשאלי)/.test(t) && /(הוצאה|תשלום|כל פעם|אשראי)/.test(t))
+      return {
+        intent: 'askPayment',
+        // "תשאל" מכיל את המחרוזת "אל", ולכן השלילה חייבת להיות ביטוי שלם
+        on: !/(אל תשאל|לא תשאל|תפסיק לשאול|בלי לשאול|די לשאול|אל תשאלי|לא צריך לשאול)/.test(t)
+      };
+
+    /* --- שער הדולר והמרה --- */
+    if (/(שער הדולר|כמה הדולר|מה השער|שער דולר)/.test(t) && amount == null)
+      return { intent: 'fxRate' };
+
+    if (/(הדולר|שער)/.test(t) && amount != null && /(עכשיו|הוא|לפי|קבע|תעדכן|עדכן)/.test(t)
+      && amount > 0.5 && amount < 20)
+      return { intent: 'fxSet', rate: nums[0].value };
+
+    if (/(כמה זה|המר|תמיר|להמיר|שווה|בכמה)/.test(t) && amount != null && FX.detect(text)) {
+      const from = FX.detect(text);
+      return { intent: 'fxConvert', amount: maxNum, from, to: from === 'USD' ? 'ILS' : 'USD' };
+    }
+
+    /* --- מטבע של חשבון --- */
+    if (/(בדולר|בדולרים|בשקל|בשקלים|במטבע)/.test(t)
+      && /(להציג|תציג|שיהיה|יהיה|תחזיק|מנוהל|לנהל|רוצה|הכל|הכול)/.test(t)) {
+      const code = /(דולר)/.test(t) ? 'USD' : 'ILS';
+      const kind = balKindOf(t);
+      return { intent: 'setCurrency', kind, code, all: /(הכל|הכול|כל הכסף|כל החשבונות)/.test(t) };
     }
 
     /* --- ניהול קטגוריות --- */
