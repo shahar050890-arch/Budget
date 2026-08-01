@@ -237,6 +237,9 @@ window.Render = (function () {
           + '<div class="so-day">' + (done ? '✅' : due ? '⏳' : '🕐') + ' ' + o.day + ' לחודש</div>'
           + '<div class="so-name">' + Parser.categoryIcon(o.name) + ' ' + U.esc(o.name) + '</div>'
           + '<div class="so-amt">' + M(o.amount) + '</div>'
+          + '<div class="so-day">' + (o.cardId
+            ? '💳 ' + U.esc((Store.get().cards.find(c => c.id === o.cardId) || {}).name || 'אשראי')
+            : '🏛️ מהחשבון') + '</div>'
           + (left != null ? '<div class="so-day">עוד ' + left + ' חודשים</div>' : '')
           + '</div>';
       }).join('')
@@ -273,8 +276,11 @@ window.Render = (function () {
       const isTransfer = t.type === 'transfer';
       const isDeposit = t.type === 'deposit';
       const isSettle = t.type === 'settlement';
+      const isGrowth = t.type === 'growth';
       const ev = t.eventId ? Store.get().events.find(x => x.id === t.eventId) : null;
-      const sub = isTransfer
+      const sub = isGrowth
+        ? (A[t.account] ? A[t.account].label : t.account) + ' · שינוי בשווי'
+        : isTransfer
         ? A[t.from].label + ' ← ' + A[t.to].label
         : isDeposit
           ? 'הפקדה ל' + A[t.to].label
@@ -289,13 +295,17 @@ window.Render = (function () {
             + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
 
       html += '<div class="row">'
-        + '<div class="row-ico">' + (isTransfer ? '🔁' : isDeposit ? '💵' : isSettle ? '💳' : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
+        + '<div class="row-ico">' + (isGrowth ? (t.gain >= 0 ? '📈' : '📉')
+          : isTransfer ? '🔁' : isDeposit ? '💵' : isSettle ? '💳'
+            : t.type === 'income' ? '💰' : Parser.categoryIcon(t.category)) + '</div>'
         + '<div class="row-main">'
         + '<div class="row-title">' + U.esc(t.note || t.category) + '</div>'
         + '<div class="row-sub">' + sub + '</div>'
         + '</div>'
-        + '<div class="row-amt ' + (isTransfer ? '' : isDeposit || t.type === 'income' ? 'good' : 'bad') + '">'
-        + (isTransfer ? '' : isDeposit || t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
+        + '<div class="row-amt ' + (isGrowth ? (t.gain >= 0 ? 'good' : 'bad')
+          : isTransfer ? '' : isDeposit || t.type === 'income' ? 'good' : 'bad') + '">'
+        + (isGrowth ? (t.gain >= 0 ? '+' : '-')
+          : isTransfer ? '' : isDeposit || t.type === 'income' ? '+' : '-') + M(t.amount) + '</div>'
         + '<button class="row-del" data-del-tx="' + t.id + '" title="מחק">✕</button>'
         + '</div>';
     }
