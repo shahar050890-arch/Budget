@@ -193,7 +193,8 @@ window.Setup = (function () {
       ask: 'יש לך תשלומים שיורדים אוטומטית בכל חודש?<br>'
         + 'שכר דירה, ארנונה, ביטוח, חדר כושר, מנויים.',
       format: 'הוראת קבע שכר דירה 4200 ב-1 לחודש',
-      altFormat: 'אפשר להוסיף עוד אחת אחרי כל תשובה — כתוב «דלג» כשסיימת.',
+      altFormat: 'לתקופה מוגבלת: הוראת קבע ביטוח 320 ב-5 לחודש למשך 12 חודשים'
+        + '<br>אפשר להוסיף עוד אחת אחרי כל תשובה — כתוב «דלג» כשסיימת.',
       skippable: true,
       skipNote: 'אם אין לך — כתוב <b>אין</b>.',
       repeatable: true,
@@ -208,8 +209,10 @@ window.Setup = (function () {
         if (num == null) return null;
         const p = Parser.parse(text.replace(/^/, 'הוראת קבע '));
         if (p.intent !== 'standingOrder' || !p.name) return null;
-        const so = Store.addStandingOrder(p.name, p.amount, p.day, p.category);
+        const so = Store.addStandingOrder(p.name, p.amount, p.day, p.category, p.months);
+        const left = Store.standingMonthsLeft(so);
         return U.esc(so.name) + ' — ' + M(so.amount) + ' בכל ' + so.day + ' לחודש'
+          + (left != null ? ' למשך ' + left + ' חודשים' : '')
           + ' <span class="muted">(סה"כ ' + M(Store.standingTotal()) + ' בחודש)</span>';
       }
     },

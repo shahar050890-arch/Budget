@@ -399,6 +399,56 @@ window.Store = (function () {
     };
   }
 
+  /**
+   * סיכום לפי חודשים — הבסיס לגרף החודשי.
+   * מחזיר את N החודשים האחרונים שיש בהם נתונים, מהישן לחדש.
+   */
+  function monthlyTotals(limit = 12) {
+    const keys = new Set();
+    state.transactions.forEach(t => keys.add(U.monthKey(t.date)));
+    keys.add(U.currentMonth());
+
+    const sorted = [...keys].sort();
+    const recent = sorted.slice(-limit);
+
+    return recent.map(k => {
+      const tx = txOfMonth(k);
+      const spent = tx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+      const income = monthIncome(k);
+      const cats = byCategory(k);
+      const flex = cats.filter(([c]) => Parser.isFlexible(c)).reduce((s, c) => s + c[1], 0);
+      return {
+        key: k, label: U.monthLabel(k), short: U.MONTH_NAMES[Number(k.split('-')[1]) - 1],
+        year: k.split('-')[0],
+        spent, income, saved: income - spent,
+        count: tx.filter(t => t.type === 'expense').length,
+        categories: cats, flex,
+        isCurrent: k === U.currentMonth()
+      };
+    });
+  }
+
+  /** כל הפרטים של חודש אחד — לתצוגת הפירוט בגרף */
+  function monthDetail(mKey) {
+    const tx = txOfMonth(mKey);
+    const expenses = tx.filter(t => t.type === 'expense');
+    const spent = expenses.reduce((s, t) => s + t.amount, 0);
+    const income = monthIncome(mKey);
+    const cats = byCategory(mKey);
+    const standing = expenses.filter(t => t.standingId);
+    return {
+      key: mKey, label: U.monthLabel(mKey),
+      spent, income, saved: income - spent,
+      count: expenses.length,
+      categories: cats,
+      standingTotal: standing.reduce((s, t) => s + t.amount, 0),
+      standingCount: standing.length,
+      biggest: expenses.slice().sort((a, b) => b.amount - a.amount).slice(0, 5),
+      flex: cats.filter(([c]) => Parser.isFlexible(c)).reduce((s, c) => s + c[1], 0),
+      avgPerDay: Math.round(spent / (mKey === U.currentMonth() ? U.dayOfMonth() : U.daysInMonth(mKey)))
+    };
+  }
+
   /** האם עברנו לחודש חדש מאז הפעם הקודמת שנפתחה האפליקציה */
   function isNewMonth() {
     return state.lastMonthSeen !== null && state.lastMonthSeen !== U.currentMonth();
@@ -562,25 +612,72 @@ window.Store = (function () {
 
   /* ---------- הוראות קבע ---------- */
 
-  function addStandingOrder(name, amount, day, category) {
+  /**
+   * הוראת קבע. השם הוא הנושא בפני עצמו — הוא נרשם גם כקטגוריה,
+   * כדי שההוצאה תופיע תחת "נטפליקס" ולא תיבלע בתוך "בילויים".
+   * `months` הוא משך ההוראה; בלעדיו היא נמשכת ללא הגבלה.
+   */
+  function addStandingOrder(name, amount, day, category, months) {
     const existing = findStandingOrder(name);
     if (existing) {
       if (amount != null) existing.amount = amount;
       if (day != null) existing.day = day;
-      if (category) existing.category = category;
+      if (category) existing.baseCategory = category;
+      if (months != null) { existing.months = months; existing.startMonth = U.currentMonth(); }
       existing.active = true;
       save();
+      registerStandingCategory(existing);
       return existing;
     }
     const so = {
       id: U.uid(), name, amount,
       day: day || 1,
-      category: category || 'כללי',
+      baseCategory: category || 'כללי',
+      months: months || null,
+      startMonth: U.currentMonth(),
       active: true, createdAt: U.todayISO()
     };
     state.standing.push(so);
     save();
+    registerStandingCategory(so);
     return so;
+  }
+
+  /** השם של ההוראה נרשם כקטגוריה, עם האייקון והסיווג של הקטגוריה שמאחוריה */
+  function registerStandingCategory(so) {
+    if (Parser.CATEGORIES.some(c => c.name === so.name)) return;
+    const base = Parser.CATEGORIES.find(c => c.name === so.baseCategory);
+    const exists = state.customCategories.find(c => c.name === so.name);
+    if (exists) return;
+    state.customCategories.push({
+      name: so.name,
+      icon: base ? base.icon : Parser.guessIcon(so.name),
+      flex: base ? !!base.flex : false,
+      fromStanding: true
+    });
+    save();
+  }
+
+  /** החודש האחרון שבו ההוראה פעילה, אם הוגדר משך */
+  function standingLastMonth(o) {
+    if (!o.months) return null;
+    return U.addMonths(o.startMonth || U.currentMonth(), o.months - 1);
+  }
+
+  /** האם ההוראה עדיין בתוקף החודש */
+  function standingInEffect(o) {
+    if (!o.active) return false;
+    const last = standingLastMonth(o);
+    return !last || U.currentMonth() <= last;
+  }
+
+  /** כמה חודשים נותרו להוראה */
+  function standingMonthsLeft(o) {
+    const last = standingLastMonth(o);
+    if (!last) return null;
+    const [ly, lm] = last.split('-').map(Number);
+    const [cy, cm] = U.currentMonth().split('-').map(Number);
+    return Math.max(0, (ly - cy) * 12 + (lm - cm) + 1);
   }
 
   function findStandingOrder(name) {
@@ -591,7 +688,12 @@ window.Store = (function () {
   }
 
   function activeStandingOrders() {
-    return state.standing.filter(o => o.active);
+    return state.standing.filter(standingInEffect);
+  }
+
+  /** הוראות שהסתיימו — נשמרות להיסטוריה */
+  function endedStandingOrders() {
+    return state.standing.filter(o => o.active && !standingInEffect(o));
   }
 
   function removeStandingOrder(id) {
@@ -633,8 +735,8 @@ window.Store = (function () {
     const posted = [];
     due.forEach(o => {
       const t = addTx({
-        type: 'expense', amount: o.amount, category: o.category,
-        note: o.name, standingId: o.id, source: 'checking',
+        type: 'expense', amount: o.amount, category: o.name,
+        baseCategory: o.baseCategory, note: o.name, standingId: o.id, source: 'checking',
         date: U.toISO(new Date(new Date().getFullYear(), new Date().getMonth(), o.day))
       });
       posted.push({ order: o, tx: t });
@@ -946,7 +1048,9 @@ window.Store = (function () {
     cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard, setTxSource,
     addStandingOrder, findStandingOrder, activeStandingOrders, removeStandingOrder,
     standingPosted, dueStandingOrders, upcomingStandingOrders, standingRemaining,
-    standingTotal, postDueStandingOrders,
+    standingTotal, postDueStandingOrders, endedStandingOrders,
+    standingLastMonth, standingInEffect, standingMonthsLeft,
+    monthlyTotals, monthDetail,
     nextBillingDate, daysToBilling, upcomingBills
   };
 })();

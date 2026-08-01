@@ -228,6 +228,49 @@ button{font-family:inherit}
 .viz-key i{display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--viz-bar); margin-inline-end:5px}
 .viz-key i.soft{opacity:.42}
 
+/* ---------- כרטיס בולט ---------- */
+.card.standout{
+  border-color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent) inset, var(--shadow);
+}
+.card.standout .card-head h2{color:var(--accent)}
+
+/* ---------- גרף חודשי ----------
+   סדרה אחת (הוצאה חודשית) בגוון אחד; החודש הנוכחי מסומן בנפרד. */
+.mchart{
+  --m-bar:#2a78d6; --m-track:#e8edf6; --m-grid:#e2e8f4;
+  display:flex; align-items:flex-end; gap:8px; height:190px;
+  overflow-x:auto; padding:4px 0 0; scrollbar-width:none;
+}
+.mchart::-webkit-scrollbar{display:none}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])) .mchart{--m-bar:#3987e5; --m-track:#1b2436; --m-grid:#25314a}
+}
+:root[data-theme="dark"] .mchart{--m-bar:#3987e5; --m-track:#1b2436; --m-grid:#25314a}
+
+.mcol{
+  flex:1 0 46px; display:flex; flex-direction:column; justify-content:flex-end;
+  align-items:center; gap:6px; height:100%; cursor:pointer; border:none;
+  background:transparent; font-family:inherit; padding:0;
+}
+.mcol-val{font-size:11.5px; font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap}
+.mcol-bar{
+  width:100%; max-width:34px; background:var(--m-bar);
+  border-radius:4px 4px 0 0; min-height:3px;
+  transition:height .4s cubic-bezier(.2,.7,.3,1), filter .15s;
+}
+.mcol-name{font-size:11.5px; color:var(--muted); white-space:nowrap}
+.mcol:hover .mcol-bar{filter:brightness(1.15)}
+.mcol.sel .mcol-bar{outline:2px solid var(--text); outline-offset:2px}
+.mcol.sel .mcol-name, .mcol.sel .mcol-val{color:var(--text); font-weight:700}
+.mcol.now .mcol-bar{opacity:.55}
+.mchart-foot{
+  display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  margin-top:12px; padding-top:12px; border-top:1px solid var(--m-grid);
+  font-size:12.5px; color:var(--muted);
+}
+.mchart-foot b{color:var(--text); font-variant-numeric:tabular-nums}
+
 /* ---------- משבצות החשבונות ---------- */
 .acc-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
 .acc-tile{

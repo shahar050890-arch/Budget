@@ -571,8 +571,11 @@ Engine.handle('הוראת קבע ארנונה 400 ב-15 לחודש');
 Engine.handle('הוראת קבע חדר כושר 250 ב-3 לחודש');
 check('נשמרו שתי הוראות קבע', Store.activeStandingOrders().length === 2);
 check('סה"כ חודשי', Store.standingTotal() === 650, Store.standingTotal());
-check('הקטגוריה זוהתה מהשם',
-  Store.findStandingOrder('ארנונה').category === 'דיור', Store.findStandingOrder('ארנונה').category);
+check('הקטגוריה שמאחורי הנושא זוהתה',
+  Store.findStandingOrder('ארנונה').baseCategory === 'דיור',
+  Store.findStandingOrder('ארנונה').baseCategory);
+check('הנושא עצמו נרשם כקטגוריה',
+  Store.get().customCategories.some(c => c.name === 'ארנונה'));
 
 // ההתחייבות נכנסת לתוכנית החודשית
 plan = Store.monthlyPlan();
@@ -612,6 +615,88 @@ check('מחיקת הוראת קבע', r.intent === 'standingDelete' && r.name ==
 Engine.handle('תמחק הוראת קבע ארנונה');
 check('נמחקה', Store.activeStandingOrders().length === 1);
 
+console.log('\n== משך הוראת קבע ונושא בפני עצמו ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+
+r = p('הוראת קבע נטפליקס 45 ב-8 לחודש למשך 12 חודשים');
+check('משך נקלט', r.intent === 'standingOrder' && r.months === 12 && r.amount === 45 && r.day === 8,
+  JSON.stringify(r));
+check('השם נקי מהמשך', r.name === 'נטפליקס', r.name);
+
+r = p('הוראת קבע ביטוח רכב 320 ב-5 לחודש');
+check('בלי משך', r.months == null, JSON.stringify(r));
+
+ans = Engine.handle('הוראת קבע נטפליקס 45 ב-8 לחודש למשך 12 חודשים');
+const nso = Store.findStandingOrder('נטפליקס');
+check('המשך נשמר', nso.months === 12, JSON.stringify(nso));
+check('חודש סיום מחושב',
+  Store.standingLastMonth(nso) === U.addMonths(U.currentMonth(), 11),
+  Store.standingLastMonth(nso));
+check('נשארו 12 חודשים', Store.standingMonthsLeft(nso) === 12, Store.standingMonthsLeft(nso));
+check('התשובה מציגה סה"כ לתקופה', /540/.test(ans), ans.slice(0, 300));
+
+// השם הוא נושא בפני עצמו
+check('השם נרשם כקטגוריה',
+  Store.get().customCategories.some(c => c.name === 'נטפליקס'),
+  JSON.stringify(Store.get().customCategories));
+check('הסיווג נגזר מהקטגוריה שמאחור', Parser.isFlexible('נטפליקס') === true);
+check('האייקון נגזר מהקטגוריה', Parser.categoryIcon('נטפליקס') === '🎬', Parser.categoryIcon('נטפליקס'));
+
+Store.get().standing[0].day = 1;
+Store.save();
+Store.postDueStandingOrders();
+const nstx = Store.get().transactions.find(t => t.standingId === nso.id);
+check('ההוצאה נרשמה תחת שם ההוראה', nstx && nstx.category === 'נטפליקס', JSON.stringify(nstx));
+check('ולא נבלעה בקטגוריה', Store.categorySpent('בילויים') === 0, Store.categorySpent('בילויים'));
+check('נספר תחת הנושא', Store.categorySpent('נטפליקס') === 45);
+
+// הוראה שהסתיימה
+const expired = Store.addStandingOrder('מנוי ישן', 100, 1, 'בילויים', 1);
+expired.startMonth = U.addMonths(U.currentMonth(), -3);
+Store.save();
+check('הוראה שפג תוקפה לא פעילה', !Store.standingInEffect(expired));
+check('לא נספרת בסה"כ',
+  !Store.activeStandingOrders().some(o => o.id === expired.id));
+check('מופיעה ברשימת שהסתיימו',
+  Store.endedStandingOrders().some(o => o.id === expired.id));
+
+console.log('\n== גרף חודשי ==');
+freshState();
+Engine.handle('המשכורת שלי 12000');
+[['2026-05-14', 4200], ['2026-05-20', 800], ['2026-06-10', 5100],
+ ['2026-07-03', 3600], ['2026-07-19', 900]].forEach(([date, amount]) => {
+  Store.get().transactions.push({
+    id: U.uid(), type: 'expense', amount, category: 'מזון',
+    note: 'בדיקה', date, source: 'checking'
+  });
+});
+Engine.handle('קניתי אוכל 500');
+Store.save();
+
+const totals = Store.monthlyTotals(12);
+check('חודשים לפי סדר כרונולוגי',
+  totals.map(m => m.key).join(',') === [...totals.map(m => m.key)].sort().join(','),
+  totals.map(m => m.key).join(','));
+check('סכום לכל חודש',
+  totals.find(m => m.key === '2026-05').spent === 5000
+  && totals.find(m => m.key === '2026-06').spent === 5100
+  && totals.find(m => m.key === '2026-07').spent === 4500,
+  JSON.stringify(totals.map(m => m.key + ':' + m.spent)));
+check('שם החודש בעברית',
+  totals.find(m => m.key === '2026-05').short === 'מאי',
+  totals.find(m => m.key === '2026-05').short);
+check('החודש הנוכחי מסומן', totals[totals.length - 1].isCurrent === true);
+
+const det = Store.monthDetail('2026-05');
+check('פירוט חודש: סכום', det.spent === 5000, det.spent);
+check('פירוט חודש: מספר הוצאות', det.count === 2, det.count);
+check('פירוט חודש: הגדולה ביותר', det.biggest[0].amount === 4200, det.biggest[0].amount);
+check('פירוט חודש: פילוח', det.categories.length === 1 && det.categories[0][0] === 'מזון');
+
+const cur = Store.monthDetail(U.currentMonth());
+check('החודש הנוכחי בפירוט', cur.spent === 500, cur.spent);
+
 console.log('\n== מועדי חיוב אשראי ==');
 Engine.handle('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב10');
 const vcard = Store.findCard('ויזה');
@@ -638,9 +723,10 @@ const bills = Store.upcomingBills();
 check('חיוב צפוי מופיע', bills.length === 1 && bills[0].amount === 700, JSON.stringify(bills.map(x => x.amount)));
 check('החיוב משויך לכרטיס הנכון', bills[0].card.name === 'ויזה');
 
+Engine.handle('הוראת קבע ארנונה 400 ב-15 לחודש');
 ans = Engine.handle('מה המצב?');
 check('הדוח מציג חיובים צפויים', /חיובי אשראי צפויים/.test(ans), ans.slice(0, 100));
-check('הדוח מציג הוראות קבע', /הוראות קבע/.test(ans));
+check('הדוח מציג הוראות קבע', /הוראות קבע/.test(ans), ans.slice(0, 400));
 
 // דביט אין לו יום חיוב
 Engine.handle('כרטיס מקס דביט מסגרת 5000');
@@ -662,6 +748,7 @@ const script = [
   '10% לחיסכון',
   'דלג',                                   // מניות חודשי
   'הוראת קבע ארנונה 400 ב-15 לחודש',
+  'הוראת קבע ביטוח 320 ב-5 לחודש למשך 6 חודשים',
   'דלג',                                   // סיום הוראות קבע
   'כרטיס ויזה מסגרת 10000',
   'דלג',                                   // סיום כרטיסים
@@ -683,9 +770,12 @@ check('הפרשה באחוזים דרך האשף',
 check('כרטיס נקלט באשף', Store.get().cards.length === 1 && Store.get().cards[0].limit === 10000);
 check('אין חובות אחרי דילוג', Store.get().debts.length === 0);
 check('יעד נקלט באשף', Store.get().goals.length === 1 && Store.get().goals[0].target === 15000);
-check('הוראת קבע נקלטה באשף',
-  Store.activeStandingOrders().length === 1 && Store.standingTotal() === 400,
+check('הוראות קבע נקלטו באשף',
+  Store.activeStandingOrders().length === 2 && Store.standingTotal() === 720,
   JSON.stringify(Store.activeStandingOrders()));
+check('המשך נקלט גם באשף',
+  Store.standingMonthsLeft(Store.findStandingOrder('ביטוח')) === 6,
+  Store.standingMonthsLeft(Store.findStandingOrder('ביטוח')));
 
 // אחרי האשף, הודעה רגילה מטופלת כרגיל
 Store.get().settings = { askPayment: false };

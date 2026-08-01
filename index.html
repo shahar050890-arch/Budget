@@ -31,6 +31,7 @@
   <button class="tab" data-view="dash">מצב כספי</button>
   <button class="tab" data-view="tx">עסקאות</button>
   <button class="tab" data-view="cards">אשראי וחובות</button>
+  <button class="tab" data-view="months">לפי חודשים</button>
   <button class="tab" data-view="events">אירועים</button>
   <button class="tab" data-view="goals">חיסכון והשקעות</button>
 </nav>
@@ -75,6 +76,11 @@
       </div>
     </div>
 
+    <div class="card standout">
+      <div class="card-head"><h2>🔁 הוראות קבע</h2><span class="muted">חוזרות בכל חודש מעצמן</span></div>
+      <div id="standingList"></div>
+    </div>
+
     <div class="card">
       <div class="card-head"><h2>כמה כסף יש לי</h2><span class="muted">«יש לי בעובר ושב 8000»</span></div>
       <div id="balancesList"></div>
@@ -99,10 +105,6 @@
   <!-- ============ TRANSACTIONS ============ -->
   <section class="view" id="view-tx">
     <div class="card">
-      <div class="card-head"><h2>🔁 הוראות קבע</h2><span class="muted">«הוראת קבע ארנונה 400 ב-15 לחודש»</span></div>
-      <div id="standingList"></div>
-    </div>
-    <div class="card">
       <div class="card-head">
         <h2>עסקאות</h2>
         <select id="txFilter" class="select">
@@ -125,6 +127,15 @@
       <div class="card-head"><h2>חובות והלוואות</h2><span class="muted">«חוב הלוואה 20000 החזר 800»</span></div>
       <div id="debtsList"></div>
     </div>
+  </section>
+
+  <!-- ============ MONTHS ============ -->
+  <section class="view" id="view-months">
+    <div class="card">
+      <div class="card-head"><h2>הוצאות לפי חודש</h2><span class="muted">לחצו על עמודה לפירוט</span></div>
+      <div id="monthsChart"></div>
+    </div>
+    <div id="monthDetail"></div>
   </section>
 
   <!-- ============ EVENTS ============ -->
