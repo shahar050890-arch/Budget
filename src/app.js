@@ -104,6 +104,8 @@
     if (Store.hasBalances()) list.push('אני יכול לקנות טלוויזיה ב-3000?');
     if (s.debts.length) list.push('עדיף להחזיר את החוב או לחסוך?');
     if (!s.events.length) list.push('אירוע חדש יום הולדת');
+    if (!s.standing.length) list.push('הוראת קבע ארנונה 400 ב-15 לחודש');
+    else list.push('הוראות קבע');
     list.push('מה המצב?');
     if (s.transactions.length) list.push('כמה הוצאתי על מזון?');
     if (s.transactions.length) list.push('סיכום החודש שעבר');
@@ -245,6 +247,14 @@
         bubble('bot', '📅 ' + U.niceDate(U.todayISO()) + ' · ' + U.monthLabel(U.currentMonth())
           + '<hr>' + Engine.HANDLERS.report(), false);
       }
+
+      // הוראות קבע שהגיע מועדן נרשמות מאליהן, ומדווחות
+      const posted = Store.postDueStandingOrders();
+      const notice = Engine.standingPostedNotice(posted);
+      if (notice) bubble('bot', notice);
+
+      const reminder = Engine.billingReminder();
+      if (reminder) bubble('bot', reminder, false);
     } else {
       greet();
     }
