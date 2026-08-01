@@ -465,6 +465,85 @@ check('היתרה הפתוחה קטנה',
 ans = Engine.handle('ירד חיוב ויזה 99999');
 check('מזהיר כשהחיוב גדול מהרשום', /גדול מהסכום שרשמתי/.test(ans), ans.slice(0, 200));
 
+console.log('\n== קרדיט מול דביט ==');
+Store.reset();
+Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('יש לי בעובר ושב 10000');
+
+r = p('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב10');
+check('זיהוי קרדיט', r.intent === 'card' && r.kind === 'credit', JSON.stringify(r));
+
+r = p('כרטיס מקס דביט מסגרת 5000');
+check('זיהוי דביט', r.intent === 'card' && r.kind === 'debit', JSON.stringify(r));
+
+Engine.handle('כרטיס ויזה קרדיט מסגרת 10000 חיוב ב10');
+Engine.handle('כרטיס מקס דביט מסגרת 5000');
+const credit = Store.findCard('ויזה');
+const debit = Store.findCard('מקס');
+check('הסוגים נשמרו', credit.kind === 'credit' && debit.kind === 'debit',
+  credit.kind + '/' + debit.kind);
+check('יש שני סוגים', Store.hasBothCardKinds());
+
+// קנייה בדביט — יורדת מיד
+let chkPre2 = Store.get().balances.checking;
+Engine.handle('שילמתי 400 במקס על אוכל');
+check('דביט יורד מהעו"ש מיד',
+  Store.get().balances.checking === chkPre2 - 400, Store.get().balances.checking);
+check('דביט לא יוצר חוב פתוח', Store.cardOutstanding(debit.id) === 0, Store.cardOutstanding(debit.id));
+
+// קנייה בקרדיט — לא יורדת עכשיו
+chkPre2 = Store.get().balances.checking;
+ans = Engine.handle('שילמתי 700 בויזה על בגדים');
+check('קרדיט לא יורד מהעו"ש',
+  Store.get().balances.checking === chkPre2, Store.get().balances.checking);
+check('קרדיט יוצר חוב פתוח', Store.cardOutstanding(credit.id) === 700, Store.cardOutstanding(credit.id));
+check('התשובה מסבירה שזה ייגבה בחודש הבא', /ייגבה בחיוב/.test(ans), ans.slice(0, 250));
+
+ans = Engine.handle('שילמתי 300 במקס על דלק');
+check('התשובה על דביט מסבירה שירד מיד', /ירד מהעו"ש מיד/.test(ans), ans.slice(0, 250));
+
+// שניהם נספרים כהוצאה של החודש
+check('שתי הקניות נספרות כהוצאה', Store.monthExpense() === 1400, Store.monthExpense());
+
+// חיוב חודשי — רק על הקרדיט
+check('חיוב פתוח כולל רק קרדיט', Store.pendingCardCharges() === 700, Store.pendingCardCharges());
+
+ans = Engine.handle('ירד חיוב מקס 300');
+check('אין סליקה לכרטיס דביט', /הוא כרטיס דביט/.test(ans), ans.slice(0, 120));
+
+chkPre2 = Store.get().balances.checking;
+Engine.handle('ירד חיוב ויזה 700');
+check('סליקת הקרדיט ירדה מהעו"ש',
+  Store.get().balances.checking === chkPre2 - 700, Store.get().balances.checking);
+check('החוב הפתוח נסגר', Store.cardOutstanding(credit.id) === 0);
+
+console.log('\n== בחירת כרטיס כשיש כמה ==');
+r = p('שילמתי 250 באשראי על מסעדה');
+check('תשלום בכרטיס בלי לציין איזה', r.intent === 'expense' && r.cardAmbiguous, JSON.stringify(r));
+
+chkPre2 = Store.get().balances.checking;
+ans = Engine.handle('שילמתי 250 באשראי על מסעדה');
+check('שואל מאיזה כרטיס', /מאיזה כרטיס שילמת/.test(ans), ans.slice(0, 160));
+check('מציג את שני הכרטיסים', /ויזה/.test(ans) && /מקס/.test(ans));
+check('לא ירד מהעו"ש עד שנדע', Store.get().balances.checking === chkPre2, Store.get().balances.checking);
+
+const spentPreAns = Store.monthExpense();
+ans = Engine.handle('מקס');
+check('השיוך בוצע', /שייכתי לכרטיס/.test(ans), ans.slice(0, 120));
+check('דביט — ירד עכשיו מהעו"ש',
+  Store.get().balances.checking === chkPre2 - 250, Store.get().balances.checking);
+check('לא נוצרה הוצאה כפולה', Store.monthExpense() === spentPreAns, Store.monthExpense());
+check('התנועה שויכה', Store.get().transactions.find(t => t.amount === 250).cardId === debit.id);
+
+// כרטיס יחיד — לא שואל
+Store.reset();
+Store.get().setup.done = true;
+Engine.handle('המשכורת שלי 12000');
+Engine.handle('כרטיס ויזה קרדיט מסגרת 10000');
+r = p('שילמתי 250 באשראי על מסעדה');
+check('כרטיס יחיד — בלי שאלה', !r.cardAmbiguous, JSON.stringify(r));
+
 console.log('\n== אשף ההקמה ==');
 Store.reset();
 check('אשף פעיל בהתחלה', Store.get().setup.done === false);

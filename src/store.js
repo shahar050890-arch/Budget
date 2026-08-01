@@ -9,7 +9,7 @@ window.Store = (function () {
     balances: { checking: 0, savings: 0, stocks: 0 },  // יתרות בפועל
     declared: {},       // אילו יתרות המשתמש הגדיר בפועל {checking:true,...}
     transactions: [],   // {id,type:'expense'|'income',amount,category,note,date,cardId,goalId,toSavings,toStocks}
-    cards: [],          // {id,name,limit,billingDay}
+    cards: [],          // {id,name,limit,billingDay,kind:'credit'|'debit'}
     debts: [],          // {id,name,amount,monthly,interest}
     goals: [],          // {id,name,target,saved,deadline,months,createdAt,done}
     limits: {},         // {category: amount}
@@ -419,7 +419,14 @@ window.Store = (function () {
     // סליקת אשראי: הכסף עוזב את העו"ש עבור הוצאות שכבר נרשמו
     if (t.type === 'settlement') { b.checking -= dir * t.amount; return; }
     if (t.type === 'income') { b[t.dest || 'checking'] += dir * t.amount; return; }
-    if (t.cardId) return;
+
+    // תשלום בכרטיס: דביט יורד מהעו"ש מיד, קרדיט ממתין לחיוב החודשי.
+    // onCard מסמן תשלום בכרטיס שעדיין לא נבחר איזה — גם הוא לא יורד עכשיו.
+    if (t.cardId || t.onCard) {
+      if (t.debit) b.checking -= dir * t.amount;
+      return;
+    }
+
     b[t.source || 'checking'] -= dir * t.amount;
     if (t.goalId || t.toSavings) b.savings += dir * t.amount;
     if (t.toStocks) b.stocks += dir * t.amount;
@@ -529,10 +536,13 @@ window.Store = (function () {
 
   /* ---------- סליקת אשראי ---------- */
 
-  /** כל החיובים שנרשמו על כרטיס, בכל החודשים */
+  /**
+   * חיובי קרדיט שנרשמו על הכרטיס, בכל החודשים.
+   * חיובי דביט לא נספרים — הם כבר ירדו מהעו"ש ביום הקנייה.
+   */
   function cardChargesAllTime(cardId) {
     return state.transactions
-      .filter(t => t.type === 'expense' && t.cardId === cardId)
+      .filter(t => t.type === 'expense' && t.cardId === cardId && !t.debit)
       .reduce((s, t) => s + t.amount, 0);
   }
 
@@ -558,6 +568,25 @@ window.Store = (function () {
       note: note || 'חיוב אשראי', date: U.todayISO(), category: 'אשראי'
     };
     state.transactions.unshift(t);
+    applyBalance(t, 1);
+    save();
+    return t;
+  }
+
+  /**
+   * שיוך תנועה לכרטיס אחרי שנרשמה — למשל אחרי שהמשתמש ענה מאיזה כרטיס שילם.
+   * מבטל את השפעת התנועה על היתרות ומחיל אותה מחדש לפי סוג הכרטיס.
+   */
+  function setTxCard(txId, cardId) {
+    const t = state.transactions.find(x => x.id === txId);
+    if (!t) return null;
+    const card = state.cards.find(c => c.id === cardId);
+    if (!card) return null;
+
+    applyBalance(t, -1);
+    t.cardId = card.id;
+    t.onCard = true;
+    t.debit = card.kind === 'debit';
     applyBalance(t, 1);
     save();
     return t;
@@ -611,18 +640,27 @@ window.Store = (function () {
       || null;
   }
 
-  function upsertCard(name, limit, billingDay) {
+  function upsertCard(name, limit, billingDay, kind) {
     let c = findCard(name);
     if (c) {
       if (limit != null) c.limit = limit;
       if (billingDay != null) c.billingDay = billingDay;
+      if (kind) c.kind = kind;
     } else {
-      c = { id: U.uid(), name, limit: limit || 0, billingDay: billingDay || 10 };
+      c = {
+        id: U.uid(), name, limit: limit || 0,
+        billingDay: billingDay || 10,
+        kind: kind || 'credit'      // ברירת המחדל בישראל היא כרטיס קרדיט
+      };
       state.cards.push(c);
     }
     save();
     return c;
   }
+
+  function creditCards() { return state.cards.filter(c => c.kind !== 'debit'); }
+  function debitCards() { return state.cards.filter(c => c.kind === 'debit'); }
+  function hasBothCardKinds() { return creditCards().length > 0 && debitCards().length > 0; }
 
   function removeCard(id) {
     state.cards = state.cards.filter(c => c.id !== id);
@@ -720,11 +758,11 @@ window.Store = (function () {
     addTx, removeTx,
     setBalance, hasBalances, pendingCardCharges, totalAssets, netWorth, liquidNow,
     savingsRate, health, monthReview, isNewMonth, markMonthSeen, addTransfer, addDeposit,
-    findCard, upsertCard, removeCard,
+    findCard, upsertCard, removeCard, creditCards, debitCards, hasBothCardKinds,
     findDebt, upsertDebt, removeDebt,
     findGoal, addGoal, removeGoal,
     setLimit, setAllocation, pushChat, addCustomCategory, removeCustomCategory,
     addEvent, findEvent, openEvents, eventTx, eventTotal, eventStatus, closeEvent, removeEvent,
-    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement
+    cardChargesAllTime, cardSettled, cardOutstanding, addSettlement, setTxCard
   };
 })();

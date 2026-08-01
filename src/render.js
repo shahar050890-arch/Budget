@@ -232,6 +232,7 @@ window.Render = (function () {
             ? 'ירידת חיוב' + (card ? ' · ' + U.esc(card.name) : '')
             : U.esc(t.category)
             + (card ? ' · ' + U.esc(card.name) : '')
+            + (t.debit ? ' · ⚡ דביט' : t.onCard && t.cardId ? ' · 🕐 קרדיט' : '')
             + (t.method ? ' · ' + U.esc(t.method) : '')
             + (ev ? ' · 🎉 ' + U.esc(ev.name) : '')
             + (t.source && t.source !== 'checking' ? ' · מה' + A[t.source].label : '');
@@ -257,14 +258,22 @@ window.Render = (function () {
     const list = Store.get().cards;
     if (!list.length) { box.innerHTML = empty('לא הוגדרו כרטיסים.<br>«כרטיס ויזה מסגרת 10000»'); return; }
     box.innerHTML = list.map(c => {
+      const debit = c.kind === 'debit';
       const used = Store.cardUsed(c.id);
-      const p = c.limit ? U.pct(used, c.limit) : 0;
+      const out = Store.cardOutstanding(c.id);
+      const p = c.limit ? U.pct(debit ? used : out, c.limit) : 0;
       return '<div class="block">'
-        + '<div class="block-head"><strong>💳 ' + U.esc(c.name) + '</strong>'
-        + '<span>' + M(used) + ' / ' + M(c.limit) + ' <button class="row-del" data-del-card="' + c.id + '">✕</button></span></div>'
+        + '<div class="block-head"><strong>💳 ' + U.esc(c.name)
+        + ' <span class="pill">' + (debit ? '⚡ דביט' : '🕐 קרדיט') + '</span></strong>'
+        + '<span>' + M(debit ? used : out) + ' / ' + M(c.limit)
+        + ' <button class="row-del" data-del-card="' + c.id + '">✕</button></span></div>'
         + '<div class="bar"><div class="bar-fill ' + barClass(p) + '" style="width:' + U.clamp(p, 2, 100) + '%"></div></div>'
-        + '<div class="row-sub">פנוי במסגרת: ' + M(Math.max(0, c.limit - used)) + ' · ' + p + '% ניצול'
-        + (c.billingDay ? ' · חיוב ב־' + c.billingDay + ' לחודש' : '') + '</div>'
+        + '<div class="row-sub">'
+        + (debit
+          ? 'הוצא החודש ' + M(used) + ' — יורד מהעו"ש מיד'
+          : 'חוב פתוח ' + M(out) + ' · פנוי במסגרת ' + M(Math.max(0, c.limit - out)) + ' · ' + p + '% ניצול'
+            + (c.billingDay ? ' · ייגבה ב־' + c.billingDay + ' לחודש' : ''))
+        + '</div>'
         + '</div>';
     }).join('');
   }

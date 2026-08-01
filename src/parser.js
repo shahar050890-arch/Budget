@@ -201,6 +201,14 @@ window.Parser = (function () {
 
   const CARD_BRANDS = ['ויזה','visa','מאסטרקארד','מאסטר','mastercard','ישראכרט','אמריקן אקספרס','אמקס','amex','כאל','cal','לאומי קארד','מקס','max','דיינרס','diners','פרימיום','זהב','דיגיטלי'];
 
+  /** סוג הכרטיס: קרדיט (חיוב חודשי מרוכז) או דביט (חיוב מיידי) */
+  function detectCardKind(text) {
+    const t = text.toLowerCase();
+    if (/(דביט|debit|חיוב מיידי|מיידי|נטען|נפרעון מיידי|ישיר)/.test(t)) return 'debit';
+    if (/(קרדיט|credit|חיוב חודשי|רגיל|נדחה|דחוי)/.test(t)) return 'credit';
+    return null;
+  }
+
   function detectCardName(text) {
     for (const b of CARD_BRANDS) {
       const re = new RegExp('(?:^|\\s|ב|ה)' + b + '(?:\\s|$|,|\\.)', 'i');
@@ -488,8 +496,9 @@ window.Parser = (function () {
       const billing = (text.match(/(?:חיוב|נגבה|מחויב)\s*(?:ב|ה)?(\d{1,2})/) || [])[1];
       return {
         intent: 'card',
-        name: detectCardName(text) || 'אשראי',
+        name: detectCardName(text) || (detectCardKind(text) === 'debit' ? 'דביט' : 'אשראי'),
         limit: limit,
+        kind: detectCardKind(text),
         billingDay: billing ? parseInt(billing, 10) : null
       };
     }
@@ -586,8 +595,12 @@ window.Parser = (function () {
 
     /* --- הוצאה (ברירת מחדל כשיש סכום) --- */
     if (amount != null) {
-      const cardName = /(שילמתי|קניתי|הוצאתי|באשראי|בכרטיס)/.test(t) || detectCardName(text)
-        ? detectCardName(text) : null;
+      const cardName = detectCardName(text);
+      // "שילמתי באשראי" בלי לומר באיזה כרטיס — צריך לשאול כשיש יותר מאחד
+      const saidCard = /(באשראי|בכרטיס|בכרטיס אשראי|באמצעות כרטיס|בקרדיט|בדביט)/.test(t);
+      let cardCount = 0;
+      try { cardCount = (window.Store && Store.get().cards.length) || 0; } catch (e) { cardCount = 0; }
+      const cardAmbiguous = saidCard && !cardName && cardCount > 1;
       const method = detectMethod(text);
       const ev = detectEvent(text);
       // שם האירוע מוסר לפני זיהוי הקטגוריה: "יום הולדת" הוא גם מילת מפתח
@@ -601,6 +614,8 @@ window.Parser = (function () {
         category: cat,
         note: note || cat,
         cardName,
+        cardAmbiguous,
+        cardKindWanted: detectCardKind(text),
         method,
         eventId: ev ? ev.id : null,
         eventName: ev ? ev.name : null,
@@ -615,5 +630,6 @@ window.Parser = (function () {
   }
 
   return { parse, CATEGORIES, categoryIcon, isFlexible, guessIcon, extractLimitSubject,
-    METHODS, detectMethod, detectEvent, extractEventName, wordMatch, stripWords, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
+    METHODS, detectMethod, detectEvent, extractEventName, wordMatch, stripWords,
+    detectCardKind, ACCOUNTS, detectAccount, detectCategory, explicitCategory, normalize, findNumbers, findMonths, extractGoalName, detectCardName, cleanNote, tidyThing };
 })();
